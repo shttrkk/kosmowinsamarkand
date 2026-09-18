@@ -36,47 +36,90 @@ def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None
     timing["load"] = time.perf_counter() - t0
 
     def read(cid: str):
+        """Чтение + признаки в фоновом потоке (deflate, numpy и cv2 отпускают GIL)."""
         try:
-            return cid, read_bs_chip(data_dir, cid, with_mask=False)
+            chip = read_bs_chip(data_dir, cid, with_mask=False)
+            chip["transform"] = chip["crs"] = None  # геопривязка модели не нужна и не используется
+            return cid, chip, predictor.prepare(chip)
         except Exception as e:  # noqa: BLE001
             log.error("BS %s: ошибка чтения: %s — пустая маска", cid, e)
-            return cid, None
+            return cid, None, None
 
     n_failed = 0
     bs = int(predictor.cfg["batch_size"])
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max(1, int(predictor.cfg["num_threads"]))) as ex:
-        chips_iter = ex.map(read, chip_ids)  # упорядоченный prefetch: чтение идёт, пока считается батч
-        batch: list[tuple[str, dict]] = []
+        def prefetch(window: int):
+            """Упорядоченный prefetch с ограниченным окном (признаки одного чипа ≈ 110 МБ)."""
+            from collections import deque
+
+            pending: deque = deque()
+            it = iter(chip_ids)
+            for cid in it:
+                pending.append(ex.submit(read, cid))
+                if len(pending) >= window:
+                    yield pending.popleft().result()
+            while pending:
+                yield pending.popleft().result()
+
+        chips_iter = prefetch(2 * bs)
+        batch: list[tuple[str, dict, object]] = []
+
+        stage2 = ThreadPoolExecutor(1)  # этап 2 (LGBM + постобработка) батча k идёт параллельно с UNet батча k+1
+        running: list = []
+
+        def one_by_one(items) -> list[np.ndarray]:
+            nonlocal n_failed
+            masks = []
+            for cid, c, _ in items:
+                try:
+                    masks.append(predictor.predict(c))
+                except Exception as e2:  # noqa: BLE001
+                    n_failed += 1
+                    log.error("BS %s: %s — пустая маска", cid, e2)
+                    masks.append(np.zeros(shapes.get(cid, DEFAULT_SHAPE), np.uint8))
+            return masks
+
+        def finish(items, probs) -> None:
+            try:
+                masks = predictor.second_stage([c for _, c, _ in items], [f for _, _, f in items], probs, ex)
+            except Exception as e:  # noqa: BLE001
+                log.error("BS батч (этап 2): %s — повтор по одному чипу", e)
+                masks = one_by_one(items)
+            for (cid, _, _), m in zip(items, masks):
+                preds[cid] = m
 
         def flush():
-            nonlocal n_failed
             if not batch:
                 return
-            try:
-                masks = predictor.predict_batch([c for _, c in batch])
-            except Exception as e:  # noqa: BLE001 — батч упал: пробуем по одному
-                log.error("BS батч: %s — повтор по одному чипу", e)
-                masks = []
-                for cid, c in batch:
-                    try:
-                        masks.append(predictor.predict(c))
-                    except Exception as e2:  # noqa: BLE001
-                        n_failed += 1
-                        log.error("BS %s: %s — пустая маска", cid, e2)
-                        masks.append(np.zeros(shapes.get(cid, DEFAULT_SHAPE), np.uint8))
-            for (cid, _), m in zip(batch, masks):
-                preds[cid] = m
+            items = list(batch)
             batch.clear()
+            if items[0][2] is None:  # модели не загружены — правила
+                for (cid, _, _), m in zip(items, predictor.predict_batch([c for _, c, _ in items])):
+                    preds[cid] = m
+                return
+            try:
+                probs = predictor.first_stage([f for _, _, f in items])
+            except Exception as e:  # noqa: BLE001 — батч упал: пробуем по одному
+                log.error("BS батч (этап 1): %s — повтор по одному чипу", e)
+                for (cid, _, _), m in zip(items, one_by_one(items)):
+                    preds[cid] = m
+                return
+            while len(running) >= 2:  # не копим признаки в памяти
+                running.pop(0).result()
+            running.append(stage2.submit(finish, items, probs))
 
-        for cid, chip in chips_iter:
+        for cid, chip, feats_ in chips_iter:
             if chip is None:
                 n_failed += 1
                 preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPE), np.uint8)
                 continue
-            batch.append((cid, chip))
+            batch.append((cid, chip, feats_))
             if len(batch) >= bs:
                 flush()
         flush()
+        for fut in running:
+            fut.result()
+        stage2.shutdown()
     timing["predict"] = time.perf_counter() - t0
     return preds, n_failed, timing

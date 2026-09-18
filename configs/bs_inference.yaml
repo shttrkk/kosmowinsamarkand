@@ -11,7 +11,8 @@ bs:
   batch_size: 8
   num_threads: 8
   unet_weights:
-    - weights/bs_unet.pt
+    - weights/bs_unet_r34_cedice.pt   # каналы v1
+    - weights/bs_unet_r34_v4.pt       # каналы v4 (+ dNBR_med3, rule_sev, dist_center); вероятности усредняются
   stack_weights: weights/bs_stack.txt
   stack_gate: 0.03
   lgbm_weights: weights/bs_lgbm.txt

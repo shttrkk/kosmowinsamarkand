@@ -1,4 +1,4 @@
-"""Рисунки и таблицы для reports/bs_module.md по OOF финальной модели BS.
+﻿"""Рисунки и таблицы для reports/bs_module.md по OOF финальной модели BS.
 
     python scripts/bs_report_figures.py --probs stack_r34_cedice --ensemble ensemble_r34_cedice_main_r34_cedice.json
 
@@ -78,7 +78,10 @@ def main() -> None:
     chips = load_chips(args.data_dir)
     ids = [c["chip_id"] for c in chips]
     probs = np.load(OOF / f"{args.probs}_group.npy", mmap_mode="r")
-    preds = [postprocess_bs(decode_probs(probs[i], dec["t_burn"], dec["w"]), chips[i], post) for i in range(len(ids))]
+    preds = []
+    for i in range(len(ids)):
+        p = np.asarray(probs[i], np.float32)
+        preds.append(postprocess_bs(decode_probs(p, dec["t_burn"], dec["w"]), chips[i], post, probs=p))
     stats: dict = {"decode": dec, "postprocess": post}
 
     # матрица ошибок
@@ -159,7 +162,7 @@ def main() -> None:
         "типичный удачный чип": int(np.argsort(iou)[int(len(iou) * 0.75)]),
     }
     stats["cases"] = {}
-    fig, ax = plt.subplots(len(cases), 6, figsize=(24, 4 * len(cases)))
+    fig, ax = plt.subplots(len(cases), 6, figsize=(21, 3.6 * len(cases)))
     for r, (title, i) in enumerate(cases.items()):
         c, p = chips[i], preds[i]
         gt = c["mask"]
@@ -177,10 +180,11 @@ def main() -> None:
         for a, (img, kw, t) in zip(ax[r], panels):
             a.imshow(img, **(kw or {}), interpolation="nearest")
             a.set_title(t, fontsize=10), a.axis("off")
-        ax[r, 0].text(0, -40, title, fontsize=13, fontweight="bold")
+        ax[r, 0].set_ylabel(title, fontsize=11)
+        ax[r, 0].set_title(f"{title}\n{c['chip_id']} RGB pre", fontsize=10)
         stats["cases"][title] = {"chip_id": c["chip_id"], "iou_burn": float(iou[i]), "cloud_frac": float(cf[i])}
     fig.tight_layout()
-    fig.savefig(FIG / "bs_error_cases.png", dpi=70)
+    fig.savefig(FIG / "bs_error_cases.png", dpi=80)
     plt.close(fig)
 
     stats["final_group"] = evaluate_masks({i: preds[i] for i in range(len(ids))}, {i: chips[i]["mask"] for i in range(len(ids))})

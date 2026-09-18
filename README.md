@@ -127,7 +127,7 @@ python train.py --module all     # пока заглушка; будет доп�
 
 ### Модуль BS (контур гари и степень поражения)
 
-Схема: признаки (`src/firemon/features/bs_features.py`) → UNet-resnet34 выбирает регион гари → LightGBM 2-го уровня
+Схема: признаки (`src/firemon/features/bs_features.py`) → два UNet-resnet34 (среднее) выбирают регион гари → LightGBM 2-го уровня
 уточняет пиксели и степень (по медианному dNBR, landcover, SCL и вероятностям UNet) → декодирование порогами →
 постобработка. Подробности и все цифры — `reports/bs_module.md`.
 
@@ -137,11 +137,14 @@ python train.py --module bs --bs-stages unet stack ensemble   # отдельны
 python -m firemon.models.bs.lgbm --stage ablate      # абляции признаков (SAR / SCL / landcover / контекст / минимум / регрессия)
 python scripts/bs_report_figures.py                  # рисунки и статистика для reports/bs_module.md
 python scripts/bs_benchmark.py --device cuda         # время BS-инференса на 89 чипах (и --device cpu)
+python scripts/bs_eda_checks.py --probs stack_avg14_event   # проверка фактов EDA об эталоне (буфер события, SCL, MMU, степень)
+python scripts/bs_log_experiments.py                 # перенос результатов из data/cache/bs_oof/*.json в reports/experiments.md
 ```
 
-Полный прогон на RTX 4070 ≈ 1 ч (UNet: 6 обучений × 5 мин + full; LGBM CV ≈ 15 мин; стек ≈ 10 мин). Промежуточные
-OOF-вероятности и выборки пикселей кэшируются в `data/cache/` (в git не входят). Результат обучения — файлы
-`weights/bs_unet.pt` (fp16, ≈ 47 МБ, `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3),
+Полный прогон на RTX 4070 ≈ 1.5 ч (UNet: 2 сети × (6 обучений × 5 мин + full); LGBM CV ≈ 15 мин; стек ≈ 15 мин; подбор
+постобработки ≈ 10 мин). Промежуточные OOF-вероятности и выборки пикселей кэшируются в `data/cache/` (в git не входят,
+нужно ≈ 8 ГБ диска и ≈ 16 ГБ RAM). Результат обучения — `weights/bs_unet_r34_cedice.pt` и `weights/bs_unet_r34_v4.pt`
+(fp16, по 47 МБ; `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3; в git добавлены через `git add -f`),
 `weights/bs_stack.txt`, `weights/bs_lgbm.txt`, `weights/bs_lc_medians.json`, `weights/bs_decode.json`.
 Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`);
 без GPU автоматически используется CPU-путь (TTA выключен).

@@ -139,6 +139,22 @@ fire-monitoring/
 - RLE шумных BS-масок длиннее стандартного лимита поля `csv` (131072) — читать submission только через `firemon.submission.read_submission` (лимит поднят) или pandas.
 - Фейковый тест: `python scripts/make_fake_test.py` → `data/test_fake/` (20 AF + 10 BS) и `baseline/sample_submission_FAKE.csv` (шаблон по всему train для OOF-оценки через `evaluate_submission`; НЕ файл организаторов).
 
+### Что уже есть (задача 04, модуль BS) — использовать, не дублировать
+- Инференс: `firemon.models.bs.predictor.BSPredictor(cfg).load().predict(chip)` / `predict_bs(chip)`; батчевый конвейер для
+  `inference.py` — `firemon.models.bs.infer.run_bs_inference(data_dir, chip_ids, load_bs_config(cfg))`. Конфиг —
+  `configs/bs_inference.yaml`; пороги декодирования и постобработка — `weights/bs_decode.json` (пишет `ensemble.py`).
+  Нет весов → аварийный режим на правилах dNBR (код выхода 0 сохраняется). Предиктор не читает геопривязку/даты/meta.
+- Схема: 2×UNet-resnet34 (каналы v1 и v4, среднее) → LightGBM 2-го уровня на «воротах» p_burn>0.03 → декодирование →
+  постобработка. OOF BS-часть 0.4955 (group) / 0.5033 (temporal); детали и все абляции — `reports/bs_module.md`.
+- Факты об эталоне BS (проверены на train): степень = пороги по **медианному dNBR 3×3**, свои для landcover (`RULE_THR` в
+  `bs_features.py`, признак `rule_sev`); эталон ⊂ маски правила (97.9 %) и обрезан буфером события ~4 км, **не
+  центрированным по чипу** (резать по центру чипа нельзя; центр события оценивается по содержимому); под SCL pre {0,3,6,11} /
+  post {0,3,9,11} гари нет; MMU = 25 px; облака/тени НЕ обнулять (−0.07…−0.09 BS-части).
+- Постобработка BS живёт в `src/firemon/models/bs/postprocess.py` (общий `src/firemon/postprocess.py` не тронут).
+- Время BS на 89 чипах: GPU ≈ 22.5 с (из них ≈ 3.7 с — импорт torch/CUDA и загрузка весов), CPU без TTA ≈ 48 с.
+- В окружении нет `pyarrow`, `onnxruntime`, `psutil` — кэши BS лежат в `data/cache/*.npy` (не parquet).
+- В PowerShell-инструменте here-string с двойными кавычками внутри `python -c` ломается — патчи/скрипты писать в файл.
+
 ## 9. Формат отчёта о выполненной задаче
 
 В конце каждой задачи агент пишет краткий отчёт (в ответе и в `reports/tasklog/<номер>_<имя>.md`): что сделано, какие файлы, как запустить, какие тесты прошли, метрики (если есть), что не получилось/открытые вопросы, что менять в CLAUDE.md.

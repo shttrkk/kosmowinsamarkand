@@ -31,7 +31,8 @@ DEFAULTS: dict = {
     "tta": True,                 # 4 отражения на GPU
     "tta_cpu": False,            # на CPU TTA по умолчанию выключен (время)
     "batch_size": 8,
-    "num_threads": 8,            # потоки признаков, LightGBM и torch на CPU
+    "num_threads": 8,            # потоки чтения/признаков/постобработки и torch на CPU
+    "lgbm_threads": 16,          # потоки LightGBM (один вызов predict на батч)
     "unet_weights": ["weights/bs_unet.pt"],
     "stack_weights": "weights/bs_stack.txt",
     "stack_gate": 0.03,
@@ -123,38 +124,39 @@ class BSPredictor:
         self.device = torch.device("cuda" if use_cuda else "cpu")
         if not use_cuda:
             torch.set_num_threads(int(self.cfg["num_threads"]))
-        for p in paths:
+        dt = torch.float16 if use_cuda else torch.float32
+        self.channels = []
+        for p in paths:  # чекпойнты ансамбля могут быть обучены на разных наборах каналов
             ck = torch.load(p, map_location="cpu", weights_only=False)
-            if self.channels is not None and ck["channels"] != self.channels:
-                raise ValueError(f"{p}: чекпойнты ансамбля обучены на разных наборах каналов")
-            self.channels = list(ck["channels"])
+            self.channels += [c for c in ck["channels"] if c not in self.channels]
             model = build_unet(ck["encoder"], len(ck["channels"]), pretrained=False, arch=ck.get("arch", "unet"))
             model.load_state_dict(ck["state_dict"])
             model = model.to(self.device).eval()
             model = model.half() if use_cuda else model.float()
-            self.models.append((model, ck.get("loss", "ce_dice")))
-            self.norm = ck["norm"]
-        dt = torch.float16 if use_cuda else torch.float32
-        self._mean = torch.tensor(self.norm["mean"], dtype=dt, device=self.device).view(1, -1, 1, 1)
-        self._std = torch.tensor(self.norm["std"], dtype=dt, device=self.device).view(1, -1, 1, 1)
+            mean = torch.tensor(ck["norm"]["mean"], dtype=dt, device=self.device).view(1, -1, 1, 1)
+            std = torch.tensor(ck["norm"]["std"], dtype=dt, device=self.device).view(1, -1, 1, 1)
+            self.models.append({"model": model, "loss": ck.get("loss", "ce_dice"), "channels": list(ck["channels"]),
+                                "mean": mean, "std": std})
 
     # ---------- предсказание ----------
     def _features(self, chip: dict) -> np.ndarray:
         return compute_bs_features(chip, lc_medians=self.lc_medians, groups=self.groups)
 
-    def _unet_probs(self, feats: list[np.ndarray]) -> np.ndarray:
+    def _unet_probs(self, feats: list[np.ndarray], xs: list[np.ndarray] | None = None) -> np.ndarray:
         import torch
 
         from .unet import predict_probs
 
-        x = np.stack([select_channels(f, self.names, self.channels) for f in feats])
+        x = np.stack(xs if xs is not None else [self._unet_input(f) for f in feats])
         tta = bool(self.cfg["tta"] if self.device.type == "cuda" else self.cfg["tta_cpu"])
         with torch.inference_mode():
-            xb = torch.from_numpy(np.clip(x, -60000, 60000)).to(self.device)
-            xb = (xb.to(self._mean.dtype) - self._mean) / self._std
+            xb = torch.from_numpy(x).to(self.device)
             out = 0.0
-            for model, loss_name in self.models:
-                out = out + predict_probs(model, xb, loss_name, tta)
+            for m in self.models:
+                idx = [self.channels.index(c) for c in m["channels"]]
+                xm = xb if idx == list(range(xb.shape[1])) else xb[:, idx]
+                xm = (xm.to(m["mean"].dtype) - m["mean"]) / m["std"]
+                out = out + predict_probs(m["model"], xm, m["loss"], tta)
             return (out / len(self.models)).float().cpu().numpy()
 
     def _lgbm_blend(self, feats: np.ndarray, p_unet: np.ndarray | None) -> np.ndarray:
@@ -175,46 +177,106 @@ class BSPredictor:
             out[:, sel] = wu * pu[:, sel] + wl * self.booster.predict(f[:, sel].T, num_threads=nthr).T.astype(np.float32)
         return out.reshape(p_unet.shape)
 
-    def _stack(self, feats: np.ndarray, p: np.ndarray) -> np.ndarray:
+    def _stack_rows(self, feats: np.ndarray, p: np.ndarray):
+        """Строки 2-го уровня для пикселей-ворот одного чипа → (X (n,F) float32, индексы пикселей)."""
         from .stack import N_UNET_FEATS, stack_feature_names, unet_features
 
         if self._stack_cols is None:
             base = stack_feature_names()[:-N_UNET_FEATS]
-            self._stack_cols = [self.names.index(n) for n in base]
-        sel = (1.0 - p[0]) > float(self.cfg["stack_gate"])
-        out = np.zeros_like(p)
-        out[0] = 1.0
-        if sel.any():
-            X = np.concatenate([feats[self._stack_cols][:, sel], unet_features(p)[:, sel]], axis=0).T
-            out[:, sel] = self.stack.predict(np.ascontiguousarray(X, dtype=np.float32),
-                                             num_threads=int(self.cfg["num_threads"])).T
-        return out
+            cols = [self.names.index(n) for n in base]
+            self._stack_cols = slice(0, len(cols)) if cols == list(range(len(cols))) else cols
+        idx = np.flatnonzero((1.0 - p[0]).ravel() > float(self.cfg["stack_gate"]))
+        if not len(idx):
+            return None, idx
+        f = feats.reshape(feats.shape[0], -1)[self._stack_cols]
+        u = unet_features(p).reshape(N_UNET_FEATS, -1)
+        X = np.empty((len(idx), f.shape[0] + N_UNET_FEATS), np.float32)
+        X[:, :f.shape[0]] = f[:, idx].T
+        X[:, f.shape[0]:] = u[:, idx].T
+        return X, idx
 
-    def predict_proba_batch(self, chips: list[dict]) -> list[np.ndarray] | None:
+    def _stack_batch(self, feats: list[np.ndarray], probs: list[np.ndarray], ex: ThreadPoolExecutor) -> list[np.ndarray]:
+        rows = list(ex.map(self._stack_rows, feats, probs))
+        outs = []
+        for p in probs:
+            o = np.zeros_like(p)
+            o[0] = 1.0
+            outs.append(o)
+        parts = [X for X, _ in rows if X is not None]
+        if parts:
+            pred = self.stack.predict(np.concatenate(parts), num_threads=int(self.cfg["lgbm_threads"])).astype(np.float32)
+            pos = 0
+            for o, (X, idx) in zip(outs, rows):
+                if X is not None:
+                    o.reshape(4, -1)[:, idx] = pred[pos:pos + len(idx)].T
+                    pos += len(idx)
+        return outs
+
+    def _stack(self, feats: np.ndarray, p: np.ndarray) -> np.ndarray:
+        with ThreadPoolExecutor(1) as ex:
+            return self._stack_batch([feats], [p], ex)[0]
+
+    def prepare(self, chip: dict):
+        """Признаки чипа + готовый вход UNet (float16). Вызывается из фоновых потоков — numpy/cv2 отпускают GIL."""
         if not self.loaded:
             self.load()
         if not self.models and self.booster is None:
             return None
-        n_thr = max(1, min(int(self.cfg["num_threads"]), len(chips)))
-        with ThreadPoolExecutor(n_thr) as ex:
-            feats = list(ex.map(self._features, chips))
-        probs = list(self._unet_probs(feats)) if self.models else [None] * len(chips)
+        feats = self._features(chip)
+        return feats, (self._unet_input(feats) if self.models else None)
+
+    def _unet_input(self, feats: np.ndarray) -> np.ndarray:
+        return np.clip(select_channels(feats, self.names, self.channels), -60000, 60000).astype(np.float16)
+
+    def first_stage(self, prepared: list) -> list:
+        """Этап 1 (GPU/torch): вероятности UNet для батча подготовленных чипов (результаты `prepare`)."""
+        feats = [f for f, _ in prepared]
+        xs = [x for _, x in prepared]
+        return list(self._unet_probs(feats, xs)) if self.models else [None] * len(feats)
+
+    def second_stage(self, chips: list[dict], prepared: list, probs: list, ex: ThreadPoolExecutor) -> list[np.ndarray]:
+        """Этап 2 (CPU): [пиксельный LGBM] → стек-LGBM → декодирование → постобработка."""
+        feats = [f for f, _ in prepared]
         if self.booster is not None:
             probs = [self._lgbm_blend(f, p) for f, p in zip(feats, probs)]
         if self.stack is not None:
-            probs = [self._stack(f, p) for f, p in zip(feats, probs)]
-        return probs
+            probs = self._stack_batch(feats, probs, ex)
+        return list(ex.map(self._finish, chips, probs))
 
-    def predict_batch(self, chips: list[dict]) -> list[np.ndarray]:
-        probs = self.predict_proba_batch(chips)
+    def predict_proba_batch(self, chips: list[dict], feats: list[np.ndarray] | None = None,
+                            ex: ThreadPoolExecutor | None = None) -> list[np.ndarray] | None:
+        if not self.loaded:
+            self.load()
+        if not self.models and self.booster is None:
+            return None
+        own = ex is None
+        ex = ex or ThreadPoolExecutor(max(1, min(int(self.cfg["num_threads"]), len(chips))))
+        try:
+            if feats is None:
+                feats = list(ex.map(self._features, chips))
+            probs = list(self._unet_probs(feats)) if self.models else [None] * len(chips)
+            if self.booster is not None:
+                probs = [self._lgbm_blend(f, p) for f, p in zip(feats, probs)]
+            if self.stack is not None:
+                probs = self._stack_batch(feats, probs, ex)
+            return probs
+        finally:
+            if own:
+                ex.shutdown()
+
+    def _finish(self, chip: dict, p: np.ndarray) -> np.ndarray:
+        dec = self.cfg["decode"]
+        mask = decode_probs(p, dec.get("t_burn"), tuple(dec.get("w", (1, 1, 1))))
+        return postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p)
+
+    def predict_batch(self, chips: list[dict], feats: list[np.ndarray] | None = None,
+                      ex: ThreadPoolExecutor | None = None) -> list[np.ndarray]:
+        probs = self.predict_proba_batch(chips, feats, ex)
         if probs is None:
             return [predict_bs_rules(c, tuple(self.cfg["rules_thresholds"])) for c in chips]
-        dec = self.cfg["decode"]
-        out = []
-        for chip, p in zip(chips, probs):
-            mask = decode_probs(p, dec.get("t_burn"), tuple(dec.get("w", (1, 1, 1))))
-            out.append(postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p))
-        return out
+        if ex is not None:
+            return list(ex.map(self._finish, chips, probs))
+        return [self._finish(c, p) for c, p in zip(chips, probs)]
 
     def predict(self, chip: dict) -> np.ndarray:
         return self.predict_batch([chip])[0]

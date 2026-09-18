@@ -101,6 +101,47 @@ def test_postprocess_ops():
     assert out[10:25, 10:18].sum() == 0 and out[20, 20] == 2 and set(np.unique(out)) <= {0, 1, 2, 3}
 
 
+def test_event_postprocess():
+    from firemon.models.bs.postprocess import (event_distance, keep_inside_largest_circle, keep_near_largest,
+                                               keep_relative_area)
+
+    m = np.zeros((128, 128), np.uint8)
+    m[10:40, 10:40] = 2          # крупнейшая компонента (900 px)
+    m[50:56, 50:56] = 1          # близкая малая (36 px)
+    m[110:120, 110:120] = 3      # далёкая (100 px)
+    probs = np.zeros((4, 128, 128), np.float32)
+    probs[0] = 1.0
+    probs[2, 10:40, 10:40], probs[0, 10:40, 10:40] = 0.9, 0.1
+    d = event_distance(probs, sigma=5.0)
+    assert d[25, 25] < 5 and d[115, 115] > 100
+    chip = make_chip(4, size=128)
+    out = postprocess_bs(m, chip, {"event_keep_r": 60}, probs=probs)
+    assert out[20, 20] == 2 and out[52, 52] == 1 and out[115, 115] == 0
+    out = postprocess_bs(m, chip, {"event_zero_r": 30}, probs=probs)
+    assert out[52, 52] == 0 and out[25, 25] == 2
+    np.testing.assert_array_equal(postprocess_bs(m, chip, {"event_keep_r": 60}, probs=None), m)  # без probs — no-op
+    assert keep_near_largest(m, 50)[115, 115] == 0 and keep_near_largest(m, 50)[52, 52] == 1
+    rel = keep_relative_area(m, 10)
+    assert rel[52, 52] == 0 and rel[115, 115] == 3 and rel[20, 20] == 2
+    circ = keep_inside_largest_circle(m, 45)
+    assert circ[20, 20] == 2 and circ[115, 115] == 0
+
+
+def test_event_features_localize_largest_strong_component():
+    from firemon.features.bs_features import event_features
+
+    rule = np.zeros((64, 64), np.float32)
+    rule[5:25, 5:25] = 3
+    rule[50:54, 50:54] = 2
+    rule[40:42, 10:12] = 1
+    f = event_features(rule, rule / 4.0)
+    assert f["dist_strong_cc"][10, 10] == 0 and f["dist_strong_cc"][52, 52] > 0
+    assert f["cc_rank"][10, 10] == 1 and f["cc_rank"][52, 52] == 2 and f["cc_rank"][0, 63] == 0
+    assert f["cc_area_rel"][10, 10] == 1.0 and 0 < f["cc_area_rel"][41, 11] < 0.05
+    empty = event_features(np.zeros((8, 8), np.float32), np.zeros((8, 8), np.float32))
+    assert all(np.isfinite(v).all() for v in empty.values())
+
+
 def test_rules_and_lc_thresholds():
     chips = [make_chip(s, size=64, with_mask=True) for s in range(3)]
     thr = fit_lc_thresholds(chips, n_rounds=1)
