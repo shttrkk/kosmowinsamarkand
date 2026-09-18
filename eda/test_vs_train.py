@@ -172,7 +172,7 @@ def main() -> int:
 
     lines += CONCLUSIONS
     OUT.write_text("\n".join(lines), encoding="utf-8", newline="\n")
-    print(f"→ {OUT}")
+    print(f"записано: {OUT}")
     return 0
 
 

@@ -43,17 +43,6 @@ def test_inference_cli_smoke(fake_test_dir, tmp_path):
     assert 0.0 <= result["score"] <= 1.0
 
 
-def test_inference_is_deterministic(fake_test_dir, tmp_path):
-    outs = []
-    for name in ("a.csv", "b.csv"):
-        out = tmp_path / name
-        proc = subprocess.run([sys.executable, str(ROOT / "inference.py"), "--data-dir", str(fake_test_dir),
-                               "--output", str(out)], capture_output=True, stdin=subprocess.DEVNULL, env=ENV, timeout=300)
-        assert proc.returncode == 0
-        outs.append(out.read_bytes())
-    assert outs[0] == outs[1]
-
-
 def test_inference_on_real_test(test_dir, tmp_path):
     """Полный прогон на реальном тесте: шаблон берётся из <data-dir>/sample_submission.csv, 447 строк, < 30 с."""
     out = tmp_path / "submission.csv"

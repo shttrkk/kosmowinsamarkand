@@ -1,12 +1,14 @@
-# Конфиг inference.py. AF — LightGBM (задача 03); BS — заглушка на правилах до задачи 04.
+# Конфиг inference.py. Бэкенды моделей зарегистрированы в src/firemon/pipeline.py (AF_BACKENDS / BS_BACKENDS).
 seed: 42
-num_threads: 4
+workers: 8               # потоки чтения чипов и расчёта признаков (перекрывается --workers); на результат не влияет
 
 af:
-  model: lgbm            # lgbm | rules (контекстное правило шага 0 — также аварийный вариант, если нет весов)
+  model: lgbm            # lgbm — LightGBM по пикселям-кандидатам (AF-17); rules — контекстное правило шага 0
+  fallback: rules        # чем заменить model, если он не поднялся (нет весов) — валидный submission важнее падения
   weights_dir: weights   # af_lgbm_fold{0..4}.txt + af_lgbm_meta.json (порог подобран по OOF)
-  num_threads: 4         # потоки LightGBM predict (фиксировано для детерминизма)
+  num_threads: 8         # потоки LightGBM predict; предсказание по строкам независимо → результат от числа не зависит
 
 bs:
-  model: rules
-  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная
+  model: rules           # rules — пороги dNBR (заглушка). После слияния task/bs: имя нового бэкенда, веса — в weights/
+  fallback: rules
+  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная (только для model: rules)

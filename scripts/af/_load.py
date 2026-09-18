@@ -4,8 +4,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 
 from firemon.io import read_af_chip, read_meta
 from firemon.splits import load_folds

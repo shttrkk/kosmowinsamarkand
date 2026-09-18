@@ -6,7 +6,6 @@ import argparse
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
 
 from firemon.io import list_chips, read_af_chip
 from firemon.models.af.predictor import AFPredictor

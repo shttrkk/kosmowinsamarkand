@@ -1,0 +1,27 @@
+# Общие зависимости без torch (точные версии). Не ставить напрямую: см. requirements.txt (GPU, CUDA 12.4)
+# и requirements-cpu.txt (CPU). Проверено на Python 3.12 (Windows 10 и python:3.12-slim); полный снимок — requirements.lock.txt
+numpy==2.5.2
+pandas==3.0.6
+scipy==1.18.1
+scikit-image==0.26.0
+scikit-learn==1.9.1
+lightgbm==4.7.0
+segmentation-models-pytorch==0.5.0
+albumentations==2.0.8
+
+rasterio==1.5.1
+tifffile==2026.9.15
+imagecodecs==2026.8.16
+geopandas==1.1.4
+shapely==2.1.2
+pyproj==3.8.0
+
+fastapi==0.141.1
+uvicorn==0.53.0
+httpx==0.28.1
+
+PyYAML==6.0.3
+tqdm==4.70.1
+matplotlib==3.11.2
+pypdf==6.19.0
+pytest==9.1.1

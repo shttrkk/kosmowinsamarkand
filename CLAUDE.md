@@ -112,7 +112,7 @@ RLE: пиксели нумеруются **с 1**, построчно слева
 ```
 fire-monitoring/
   CLAUDE.md  README.md  requirements.txt  Dockerfile  .gitignore  pyproject.toml
-  inference.py         # единственная точка входа инференса (ТЗ)
+  inference.py         # единственная точка входа инференса (ТЗ) — только CLI
   train.py             # `python train.py --module af|bs|all`
   configs/             # yaml-конфиги моделей и путей
   src/firemon/
@@ -121,6 +121,7 @@ fire-monitoring/
     metrics.py         # F1_af, IoU_burn, mIoU_sev, Score — совместимо со скриптом организаторов
     splits.py          # групповые фолды
     submission.py      # сборка/валидация submission.csv по шаблону
+    pipeline.py        # конвейер инференса: реестры AF_BACKENDS/BS_BACKENDS — место подключения моделей
     features/af_features.py  bs_features.py
     models/af/…  models/bs/…
     postprocess.py
@@ -163,6 +164,20 @@ fire-monitoring/
 
 ### Сервис (задача 06) — использовать, не дублировать
 - `service/` (FastAPI + Leaflet), запуск `python -m uvicorn service.app:app --port 8000`; данные — `python scripts/build_service_data.py --source both` (перезапустить после появления финальных `AFPredictor`/`BSPredictor`: адаптер `service/predictors.py` ждёт `Predictor(config).load()/.predict(chip)` и опционально `.predict_proba(chip)`). В git — только снимок gt `service/data/*.geojson.gz`; `firemon.gpkg` не коммитить. Описание — `reports/service.md`.
+
+### Инференс, Docker, скорость (задача 05) — использовать, не дублировать
+- `inference.py` — тонкий CLI (`--data-dir --output [--sample-submission --config --device auto|cpu|cuda --workers N --profile]`), коды выхода 0 / 1 (файл не прошёл валидацию) / 2 (нет входных данных). Вся работа с моделями — в `src/firemon/pipeline.py`: бэкенд = функция `(data_dir, chip_ids, cfg, ctx) -> (preds, n_failed)`, реестры `AF_BACKENDS` / `BS_BACKENDS`, выбор в `configs/inference.yaml` (`<kind>.model`, `<kind>.fallback`). **Подключение BSPredictor = одна запись в `BS_BACKENDS` + веса в `weights/` + `bs.model` в конфиге**; `inference.py`, Dockerfile, README не трогать. Для бэкенда есть готовое: `map_chips` (потоки, пропуск отсутствующих/битых чипов → None), `empty_mask`, `ctx.torch_device()` (ленивый импорт torch), `ctx.profiler.stage(...)`.
+- Скорость (AF LightGBM + BS-заглушка, CPU, 269 чипов): ~10–11 с, Docker 11.1–11.5 с; бюджет BS-модели на CPU ≈ 16–19 с до порога 30 с. Потоки = процессы по скорости → оставлены потоки. Детали и таблица для дополнения — `reports/speed.md`.
+- Детерминизм: submission побайтно одинаков при любом `--workers`, числе потоков LightGBM, в venv cu124 / venv CPU / Docker (`tests/test_reproducibility.py`). Переобучение AF даёт те же веса по содержимому; на Windows LightGBM пишет CRLF, в git LF — «M» в `git status` после `train.py` при пустом `git diff` — это только EOL.
+- Зависимости: `requirements-base.txt` (всё без torch) ← `requirements.txt` (torch cu124) и `requirements-cpu.txt` (torch CPU, Docker). Новый пакет добавлять в `requirements-base.txt`. В `python:3.12-slim` колесу rasterio нужен `libexpat1`, LightGBM — `libgomp1` (уже в Dockerfile).
+- Docker: `Dockerfile` (CPU, собран и проверен на реальном тесте), `Dockerfile.gpu` (не тестировался). В образ копируются только `inference.py`, `train.py`, `configs/`, `src/`, `weights/` — новый каталог, нужный инференсу, добавить в `COPY`.
+- Отправки на лидерборд — `reports/submissions.md` (stub 0.3117; AF LightGBM + BS-заглушка 0.6035 → F1_af на public ≈ 0.93–0.99).
+
+### Разработка в нескольких worktree
+- Worktree `C:\Users\User\hack\wt-{af,bs,eda,svc}` (ветки `task/*`) рядом с основным `fire-monitoring` (`main`). **Общий `.venv` основного worktree, `pip install -e .` НЕ делать**: editable-установка привязала бы `firemon` к одному worktree, остальные молча импортировали бы чужой код.
+- В каждой сессии `PYTHONPATH` = `<свой worktree>\src` (`$env:PYTHONPATH = "$PWD\src"`); точки входа и тесты сами добавляют свой `src/` в `sys.path`.
+- В каждом worktree `data`, `baseline`, `weights` — **junction-ы** на каталоги основного. Следствия: (1) веса, записанные агентом в своём worktree, сразу появляются в `main` как неотслеживаемые файлы — перед слиянием ветки сверять с веткой по blob-хэшу (`git hash-object` против `git rev-parse <ветка>:<путь>`), совпавшие копии удалять, иначе merge откажется; (2) ветка может «случайно» закоммитить чужие веса (так было с `task/eda`) — безвредно, если файлы совпадают байт-в-байт.
+- ⚠️ **Никогда не удалять worktree с junction-ами через `Remove-Item -Recurse` / `rm -rf`** — команда пройдёт внутрь junction и удалит общие `data/` и `weights/`. Сначала снять ссылки: `cmd /c rmdir data`, `cmd /c rmdir baseline`, `cmd /c rmdir weights` (удаляет только ссылку), затем `git worktree remove <путь>`.
 
 ## 9. Формат отчёта о выполненной задаче
 

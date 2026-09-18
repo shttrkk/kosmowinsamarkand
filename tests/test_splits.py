@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from firemon.io import read_meta
 from firemon.splits import (af_groups, bs_groups, build_fold_tables, load_folds, make_af_folds,

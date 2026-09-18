@@ -49,6 +49,13 @@ def write_submission(rows: list[tuple[str, int, str]], out_csv: str | Path) -> N
             f.write(f'{chip_id},{int(class_id)},"{rle}"\n')  # rle всегда в кавычках, пустая маска → ""
 
 
+def submission_rows(af_preds: Mapping[str, np.ndarray], bs_preds: Mapping[str, np.ndarray]) -> list[tuple[str, int, str]]:
+    """Строки submission без шаблона: AF — class 1, BS — class 1/2/3, порядок — по chip_id (детерминированно)."""
+    rows = [(c, 1, rle_encode(np.asarray(af_preds[c]) == 1)) for c in sorted(af_preds)]
+    rows += [(c, k, rle_encode(np.asarray(bs_preds[c]) == k)) for c in sorted(bs_preds) for k in (1, 2, 3)]
+    return rows
+
+
 def build_submission(af_preds: Mapping[str, np.ndarray], bs_preds: Mapping[str, np.ndarray],
                      sample_submission_csv: str | Path, out_csv: str | Path, strict: bool = True) -> int:
     """Пишет submission с тем же набором и порядком пар (chip_id, class_id), что в шаблоне.

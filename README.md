@@ -1,43 +1,53 @@
 # Мониторинг природных пожаров — КосмоХакатон 2026
 
-Решение кейса «Мониторинг природных пожаров»:
+## 1. Кратко о решении
 
-1. **AF (Active Fire)** — по чипу VIIRS 256×256 @375 м: бинарная маска пикселей природного горения.
+Решение кейса «Мониторинг природных пожаров» из пяти частей:
+
+1. **AF (Active Fire)** — по чипу VIIRS 256×256 @375 м: бинарная маска пикселей природного горения. Пиксели-кандидаты
+   (раздельные пороги день/ночь) → 110 признаков (контекст окон, z-score, признаки блика, landcover, метео) →
+   среднее 5 фолд-моделей LightGBM → порог по OOF.
 2. **BS (Burn Severity)** — по чипу 512×512 @20 м (Sentinel-2/1 pre/post + DEM/slope/landcover): маска степени поражения 0–3.
-3. **`inference.py`** → `submission.csv` в формате RLE.
-4. **Сервис** (FastAPI + Leaflet): термоточки, контуры гарей (GeoJSON/Shapefile), справка по площадям.
-5. Отчёт `reports/report.md`, журнал экспериментов `reports/experiments.md`.
+   Сейчас в `main` — baseline на порогах dNBR; обучаемая модель (`BSPredictor`) подключается отдельным бэкендом
+   (см. «[Как подключить модель](#как-подключить-модель)»).
+3. **`inference.py`** → `submission.csv` в формате RLE, одна команда, ~10 с на CPU, результат побайтно воспроизводим.
+4. **Сервис** (FastAPI + Leaflet): термоточки, контуры гарей (GeoJSON/Shapefile), справка по площадям в га.
+5. Отчёты в `reports/` (EDA, baseline, эксперименты, скорость, отправки).
+
+![Схема пайплайна](reports/figures/pipeline.png)
 
 Метрика: `Score = 0.35·F1_af + 0.35·IoU_burn + 0.30·mIoU_sev` (микро-усреднение по пикселям всех чипов).
+Схема перерисовывается командой `python scripts/make_pipeline_figure.py`.
 
-> Статус: инфраструктура готова (I/O, RLE, метрика, сабмит, фолды, тесты). AF — LightGBM (OOF F1 0.9682, temporal 0.9597, см. `reports/af_module.md`). BS пока — правила-заглушки.
+## 2. Результаты
 
-## Структура
+| Модуль | Модель | OOF (GroupKFold-5) | Временной сплит (val = 2024) | Примечание |
+|---|---|---|---|---|
+| AF | правило-baseline `I4>320 K & I4−I5>15 K` | F1 0.2435 (весь train) | — | строка 0 `reports/experiments.md` |
+| AF | **LightGBM по кандидатам (AF-17)** | **F1 0.9682** | **F1 0.9597** | `reports/af_module.md` |
+| BS | baseline: dNBR 0.10/0.27/0.44 | IoU_burn 0.3706, mIoU_sev 0.3129 (весь train) | — | текущий бэкенд `rules` |
+| BS | BSPredictor | — | — | обучается в ветке `task/bs`, будет дополнено |
 
-```
-inference.py            единственная точка входа инференса
-train.py                обучение: python train.py --module af|bs|all (af — LightGBM; bs — пока заглушка)
-configs/                inference.yaml, af_lgbm.yaml, folds_af.csv, folds_bs.csv (фиксированная валидация)
-src/firemon/
-  io.py                 чтение чипов → dict массивов (C,H,W) + имена каналов, геопривязка, meta
-  rle.py                RLE encode / decode / validate (формат ТЗ)
-  metrics.py            F1_af, IoU_burn, mIoU_sev, Score; evaluate_submission
-  submission.py         сборка и валидация submission.csv по шаблону
-  splits.py             групповые фолды (тайл / пространственный блок) + временной сплит
-  models/af             AF: predictor.py (AFPredictor), pipeline.py / train_lgbm.py / dataset.py (обучение), rules.py (baseline-правило)
-  models/bs             BS (сейчас rules.py — заглушка)
-  features/, postprocess.py, utils.py
-scripts/                check_data.py, make_fake_test.py, af/ (grid правила, абляции, постобработка, профиль, рисунки)
-service/                веб-сервис (FastAPI + static/)
-eda/, reports/          EDA, отчёт, журнал экспериментов, tasklog/
-tests/                  pytest
-docs/                   ТЗ и критерии (pdf + txt)
-data/, baseline/        данные и материалы организаторов (не в git)
-```
+| Отправка на public-лидерборд | Состав | Score |
+|---|---|---|
+| `submission_stub.csv` | оба baseline-правила | 0.3117 (на train 0.3088) |
+| `submission_af.csv` | AF LightGBM + BS baseline | **0.6035** → F1_af на public ≈ 0.93–0.99 |
 
-## Установка (Windows, PowerShell)
+Подробно: `reports/submissions.md`, `reports/experiments.md`, `reports/baseline_review.md`, `reports/eda.md`.
 
-Требуется Python 3.10+ (проверено на 3.12.7). GPU нужна только для обучения; инференс работает на CPU.
+## 3. Требования к окружению
+
+- ОС: Windows 10/11 или Linux x86_64 (glibc ≥ 2.28: Debian 11+, Ubuntu 20.04+). Разработка велась на Windows 10,
+  Linux проверен в Docker (`python:3.12-slim`).
+- Python **3.10–3.12** (`pyproject.toml`: `>=3.10,<3.13`); проверено на **3.12.7**. Версии пакетов зафиксированы.
+- GPU **не требуется**: инференс целиком укладывается в ~10 с на CPU. CUDA 12.4 (драйвер ≥ 550) нужна только для
+  обучения нейросетевой BS-модели.
+- RAM: инференс ≤ 2 ГБ, обучение AF ≤ 4 ГБ. Диск: ~6 ГБ на окружение с CUDA-сборкой torch (~1.5 ГБ с CPU-сборкой),
+  данные train + test ≈ 3 ГБ.
+
+## 4. Установка
+
+PowerShell (Windows):
 
 ```powershell
 git clone <repo-url> fire-monitoring
@@ -45,135 +55,181 @@ cd fire-monitoring
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+pip install -r requirements.txt          # с GPU (torch + CUDA 12.4)
+# pip install -r requirements-cpu.txt    # без GPU: те же версии, torch CPU
+$env:PYTHONIOENCODING = 'utf-8'          # кириллица в выводе скриптов
+$env:PYTHONPATH = "$PWD\src"            # нужно только для команд вида `python -m firemon.…`
 ```
 
-Без GPU: в `requirements.txt` убрать строку `--extra-index-url …` и суффиксы `+cu124` у `torch`/`torchvision`.
-Точный снимок окружения разработки — `requirements.lock.txt`.
+bash (Linux/macOS):
 
-Linux/macOS: то же, активация `source .venv/bin/activate`.
+```bash
+git clone <repo-url> fire-monitoring
+cd fire-monitoring
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements-cpu.txt      # или requirements.txt при наличии GPU
+export PYTHONPATH=$PWD/src               # нужно только для команд вида `python -m firemon.…`
+```
 
-## Подготовка данных
+`pip install -e .` **не нужен**: `inference.py`, `train.py`, скрипты и тесты сами добавляют `src/` в `sys.path`
+(переменная `PYTHONPATH` требуется лишь для `python -m firemon.…`; альтернатива ей — `pip install -e .`).
+Файлы зависимостей: `requirements-base.txt` (всё, кроме torch, точные версии) подключается из `requirements.txt`
+(torch cu124) и `requirements-cpu.txt` (torch CPU); `requirements.lock.txt` — полный снимок окружения разработки.
+
+## 5. Структура входных данных
+
+Распаковка (внутри архивов уже лежат каталоги `train/` и `test/`):
 
 ```powershell
-# train: внутри архива уже лежит каталог train/
 New-Item -ItemType Directory -Force data | Out-Null
 tar -xf "C:\path\to\fire-train-renamed.tar" -C data
-python scripts/check_data.py                 # 420 AF × 3 файла, 224 BS × 6 файлов → «ВСЁ ОК»
-
-# test: внутри архива лежит каталог test/ (вместе с meta.csv и sample_submission.csv)
 tar -xf "C:\path\to\fire-test-renamed.tar" -C data
-New-Item -ItemType Directory -Force baseline | Out-Null
-Copy-Item data\test\sample_submission.csv baseline\sample_submission.csv   # необязательная копия шаблона
-python scripts/check_data.py --split test    # 180 AF × 2 файла, 89 BS × 5 файлов, 447 строк шаблона → «ВСЁ ОК»
+python scripts/check_data.py                 # train: 420 AF × 3 файла, 224 BS × 6 файлов → «ВСЁ ОК»
+python scripts/check_data.py --split test    # test: 180 AF × 2, 89 BS × 5, 447 строк шаблона → «ВСЁ ОК»
 ```
 
-Ожидаемая структура:
-
-```
-data/train/af/{meta.csv, viirs/, aux/, masks/}
-data/train/bs/{meta.csv, sentinel2_pre/, sentinel2_post/, sentinel1_pre/, sentinel1_post/, aux/, masks/}
-
-data/test/meta.csv                 один общий на оба модуля: chip_id,kind,width,height,gsd,valid_frac,cloud_frac (180 af + 89 bs)
-data/test/sample_submission.csv    шаблон: 447 строк chip_id,class_id,rle (rle пустая) — AF по 1 строке, BS по 3
-data/test/af/{viirs/, aux/}        AF_te_000001_VIIRS_I1-I5.tif, AF_te_000001_AUX.tif
-data/test/bs/{sentinel2_pre/, sentinel2_post/, sentinel1_pre/, sentinel1_post/, aux/}
-baseline/sample_submission.csv     копия шаблона (запасное место поиска)
+```bash
+mkdir -p data && tar -xf /path/to/fire-train-renamed.tar -C data && tar -xf /path/to/fire-test-renamed.tar -C data
+python scripts/check_data.py && python scripts/check_data.py --split test
 ```
 
-Раскладка теста отличается от train: масок нет, `meta.csv` один в корне (а не `af/meta.csv` + `bs/meta.csv`).
-Код поддерживает обе: сначала ищется `<data-dir>/<kind>/meta.csv`, иначе `<data-dir>/meta.csv` с фильтром по колонке
-`kind`. Если `meta.csv` нет вовсе, список чипов берётся из `sample_submission.csv` / имён файлов. Геопривязки в тестовых
-GeoTIFF нет — инференсу она не нужна. Baseline и скрипты RLE/метрики организаторы не выдавали: формат submission
-реализован строго по тексту ТЗ (`tests/test_rle_spec.py`).
+Каталог теста (то, что передаётся в `--data-dir`):
 
-> **Windows:** `aux` — зарезервированное имя устройства. Файлы внутри `aux/` читаются нормально, но сам каталог
-> нельзя открыть в Проводнике/PowerShell или создать обычным `mkdir`. Код использует `firemon.io.win_path()`
-> (префикс `\\?\`); вручную с этим каталогом ничего делать не нужно.
+```
+data/test/
+  meta.csv                 один на оба модуля: chip_id,kind,width,height,gsd,valid_frac,cloud_frac (180 af + 89 bs)
+  sample_submission.csv    шаблон: 447 строк chip_id,class_id,rle (rle пустая) — AF по 1 строке, BS по 3
+  af/viirs/AF_te_000001_VIIRS_I1-I5.tif      af/aux/AF_te_000001_AUX.tif
+  bs/sentinel2_pre/BS_te_000001_Sentinel-2_pre.tif   bs/sentinel2_post/…   bs/sentinel1_pre/…   bs/sentinel1_post/…   bs/aux/…
+```
 
-## Инференс
+- **Где `sample_submission.csv`:** ищется в порядке `--sample-submission` → `<data-dir>/sample_submission.csv` →
+  `baseline/sample_submission.csv`. Шаблон определяет состав строк; чип из шаблона, которого нет на диске, получает пустую
+  маску и warning. Без шаблона строки формируются по `meta.csv` / именам файлов.
+- `meta.csv`: поддерживаются обе раскладки — `<data-dir>/<kind>/meta.csv` (как в train) и общий `<data-dir>/meta.csv`.
+  Для инференса он не обязателен (нужен только для нестандартных размеров чипов).
+- Train: `data/train/af/{meta.csv, viirs/, aux/, masks/}`, `data/train/bs/{meta.csv, sentinel2_pre/, …, aux/, masks/}`.
+- Baseline и скрипты RLE/метрики организаторы не выдавали: формат реализован строго по тексту ТЗ (`tests/test_rle_spec.py`)
+  и подтверждён первой отправкой на лидерборд.
 
-```powershell
+> **Windows:** `aux` — зарезервированное имя устройства. Файлы внутри `aux/` читаются нормально, но сам каталог нельзя
+> открыть в Проводнике/PowerShell или создать обычным `mkdir`. Код использует `firemon.io.win_path()` (префикс `\\?\`,
+> на Linux — no-op); вручную с этим каталогом ничего делать не нужно. `tar -xf` распаковывает его без проблем.
+
+## 6. Запуск инференса
+
+Одна команда (PowerShell и bash одинаково):
+
+```
 python inference.py --data-dir data/test --output out/submission.csv
 ```
 
-- шаблон строк: `--sample-submission`, иначе `<data-dir>/sample_submission.csv`, иначе `baseline/sample_submission.csv`;
-- параметры: `--config configs/inference.yaml`;
-- без интерактива, код выхода 0, в конце печатается полное время; результат автоматически валидируется.
+`submission.csv` появляется по пути `--output` (каталоги создаются). Без интерактива; в конце печатается полное время.
 
-Проверка файла перед отправкой (валидатор формата + сводка: пиксели по классам, пустые маски) и оценка по известным маскам:
+| Конфигурация (269 чипов теста) | Время |
+|---|---|
+| CPU, venv (i5-13600KF, 8 потоков) — AF LightGBM + BS baseline | **~10–11 с** (9.3–12.4) |
+| CPU, Docker-образ `firemon` (включая запуск контейнера) | 11.1–11.5 с |
+| CPU, один поток (`--workers 1`) | ~19–21 с |
+| GPU | не используется текущими моделями; появится вместе с BS-моделью |
 
-```powershell
-python scripts/check_submission.py out/submission.csv      # шаблон и размеры чипов берутся из data/test
-python -m firemon.submission --validate out/submission.csv --sample data/test/sample_submission.csv --data-dir data/test
+Подробности, профиль этапов и проверки детерминизма — `reports/speed.md`.
+
+Необязательные аргументы: `--sample-submission CSV`, `--config configs/inference.yaml`, `--device auto|cpu|cuda`
+(для нейросетевых бэкендов; LightGBM и правила всегда на CPU), `--workers N` (потоки чтения/признаков, по умолчанию 8 —
+на результат не влияет), `--profile` (таблица времени по этапам). Коды выхода: **0** — файл записан и прошёл валидацию;
+**1** — записан, но не прошёл валидацию; **2** — нет входных данных/конфига (понятное сообщение вместо трассировки).
+
+Воспроизводимость: повторный запуск даёт **побайтно тот же файл** при любом `--workers` и числе потоков LightGBM
+(`tests/test_reproducibility.py`); результат в Docker (Linux) побайтно совпадает с Windows.
+
+Проверка файла перед отправкой и оценка по известным маскам:
+
+```
+python scripts/check_submission.py out/submission.csv      # валидатор + сводка: пиксели по классам, пустые маски
+python scripts/make_fake_test.py                           # 20 AF + 10 BS чипов train в data/test_fake
+python inference.py --data-dir data/test_fake --output out/submission_fake.csv
 python -m firemon.metrics --submission out/submission_fake.csv --masks-dir data/train --sample-submission data/test_fake/sample_submission.csv
 ```
 
-Отправленные на лидерборд файлы хранятся в `submissions/` (первый — `submission_stub.csv`, правила-baseline, проверка формата).
-Сдвиг распределений test vs train: `python eda/test_vs_train.py` → `reports/test_vs_train.md`.
+### Как подключить модель
 
-Сквозная проверка с метрикой (20 AF + 10 BS чипов из train с известными масками, раскладка train):
+Модели подключаются в одном месте — реестрах `AF_BACKENDS` / `BS_BACKENDS` в `src/firemon/pipeline.py`; выбор — в
+`configs/inference.yaml` (`af.model`, `bs.model`, запасной вариант `fallback`). Чтобы включить `BSPredictor` после слияния
+`task/bs`: (1) добавить функцию-бэкенд в `BS_BACKENDS`, (2) положить веса в `weights/`, (3) выставить `bs.model`.
+`inference.py`, Dockerfile и команды из этого README не меняются. Если бэкенд не поднялся (нет весов) — используется
+`fallback` с ошибкой в логе: валидный submission важнее падения.
 
-```powershell
-python scripts/make_fake_test.py
-python inference.py --data-dir data/test_fake --output out/submission_fake.csv
-```
+## 7. Docker
 
-## Валидация (обязательна для всех экспериментов)
-
-Тест разделён по территории и по времени, поэтому используются только зафиксированные фолды:
-
-- `configs/folds_af.csv` — 5 групповых фолдов, группа = тайл `(epsg, x_min, y_min)` (70 тайлов);
-- `configs/folds_bs.csv` — 5 групповых фолдов, группа = пространственный блок 50×50 км (один пожар — один фолд);
-- колонка `temporal_split`: `val` = 2024 год, `train` = остальные.
-
-```python
-from firemon.splits import load_folds
-folds = load_folds("af")   # chip_id, fold, temporal_split, group
-```
-
-Пересоздание (детерминированно, seed=42): `python -m firemon.splits --data-dir data/train`.
-Каждый эксперимент записывается строкой в `reports/experiments.md`.
-
-## Обучение
+CPU-образ (проверен: собран и запущен на реальном `data/test`, результат побайтно совпал с запуском из venv):
 
 ```powershell
-python train.py --module af      # AF: признаки → data/cache/af_train.npz → 5 фолдов LightGBM → weights/af_lgbm_fold{0..4}.txt + af_lgbm_meta.json
-python train.py --module all     # bs — пока заглушка
+docker build -t firemon .
+docker run --rm -v C:\path\to\test:/data:ro -v C:\path\to\out:/out firemon --data-dir /data --output /out/submission.csv
 ```
 
-AF (~1.5 мин на 8 потоках): печатает OOF F1 (GroupKFold по тайлу), F1 на временном сплите (val = 2024), срезы, пишет
+```bash
+docker build -t firemon .
+docker run --rm -v /path/to/test:/data:ro -v /path/to/out:/out firemon --data-dir /data --output /out/submission.csv
+```
+
+В образе: код, конфиги, веса из `weights/`, все зависимости (включая torch CPU для нейросетевого BS-бэкенда); сеть при
+запуске не нужна. `ENTRYPOINT ["python", "inference.py"]` — все аргументы те же, что в разделе 6. Размер образа ≈ 2.8 ГБ,
+сборка ≈ 5–6 мин (почти всё — загрузка колёс). Если в `/data` нет `sample_submission.csv`, передайте его явно:
+`-v C:\path\to\sample_submission.csv:/sample.csv:ro … --sample-submission /sample.csv`.
+
+GPU-образ: `docker build -f Dockerfile.gpu -t firemon:gpu .`, запуск с `--gpus all`. **Не тестировался** (в текущем
+решении GPU на инференсе не используется); написан по тому же шаблону на базе `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`.
+Запасной путь без Docker — venv из раздела 4.
+
+## 8. Веса
+
+Веса лежат **в git** в `weights/` (суммарно ~5 МБ, лимит 100 МБ не превышен) — отдельно скачивать ничего не нужно:
+
+```
+weights/
+  af_lgbm_fold0.txt … af_lgbm_fold4.txt   5 фолд-моделей LightGBM (текстовый формат)
+  af_lgbm_meta.json                        список признаков, порог по OOF, параметры кандидатов
+  (веса BS-модели появятся здесь после слияния task/bs)
+```
+
+Нет весов AF → `inference.py` автоматически переходит на контекстное правило (OOF F1 0.8965) с ошибкой в логе.
+Предобученные сторонние модели сейчас не используются.
+
+## 9. Обучение
+
+```
+python train.py --module af      # AF: признаки → data/cache/af_train.npz → 5 фолдов LightGBM → weights/af_lgbm_*
+python train.py --module all     # af + bs (bs — пока baseline на правилах, обучать нечего)
+```
+
+AF: ~1.5 мин с расчётом кэша признаков, ~30 с с готовым кэшем (8 потоков CPU, GPU не нужна). Печатает OOF F1
+(GroupKFold по тайлу) и F1 на временном сплите (val = 2024), срезы по покрову/размеру очага; пишет
 `reports/af_train_report.json` и строку в `reports/experiments.md` (`--no-log` — не писать; `--rebuild-cache` — пересчитать
-кэш признаков). Детерминировано: повторный запуск из чистого состояния даёт OOF F1 0.9682 / temporal 0.9597 и побитово
-те же веса. Исследовательские скрипты (не нужны для воспроизведения сабмита):
+кэш). **Детерминировано:** повторный запуск даёт OOF F1 0.9682 / temporal 0.9597 и веса, совпадающие по содержимому
+байт-в-байт (проверено: `git diff` пуст; на Windows файлы пишутся с CRLF, в git хранятся с LF).
 
-```powershell
-python scripts/af/step0_rule_grid.py      # шаг 0: пороги контекстного правила по фолдам
-python scripts/af/experiments.py          # варианты LightGBM и абляции → reports/af_experiments.json
-python scripts/af/postprocess_eval.py     # гистерезис / одиночные / вода
-python scripts/af/ensemble_vs_single.py   # 5 фолд-моделей vs одна модель
-python scripts/af/profile_inference.py --data-dir data/test_fake
-python scripts/af/make_report_figures.py  # reports/figures/af_*.png
-python scripts/af/candidate_margin.py     # запас огня до порогов кандидатов (AF-17)
-python scripts/af/test_sanity.py          # статистика test vs train → reports/af_test_sanity.md
+Валидация фиксирована: `configs/folds_af.csv` (5 групповых фолдов по тайлу), `configs/folds_bs.csv` (блоки 50×50 км),
+колонка `temporal_split` (val = 2024). Пересоздание: `python -m firemon.splits --data-dir data/train` (seed 42).
+Исследовательские скрипты AF (для воспроизведения сабмита не нужны): `scripts/af/*.py` — сетка правила, абляции,
+постобработка, ансамбль, профиль, рисунки; EDA: `python eda/eda_af.py`, `python eda/eda_bs.py`, `python eda/test_vs_train.py`.
+
+## 10. Сервис
+
+Веб-карта + REST API: по полигону/bbox и интервалу дат — термоточки, контуры гарей (GeoJSON/Shapefile, атрибуты
+id/класс/площадь) и справка по площадям (JSON/CSV). Подробности — `reports/service.md`, `service/README.md`.
+
 ```
-
-## Сервис
-
-Веб-карта + REST API (FastAPI + Leaflet): по полигону/bbox и интервалу дат — термоточки, контуры гарей
-(GeoJSON/Shapefile, атрибуты id/класс/площадь) и справка по площадям (JSON/CSV). Подробности — `reports/service.md`.
-
-```powershell
-# зависимости те же (requirements.txt). Сервис стартует сразу после клонирования — из снимка эталонных
-# слоёв service/data/*.geojson.gz. Полная пересборка (эталон + предсказания моделей, нужен data/train, ~2 мин):
-python scripts/build_service_data.py            # --source gt|pred|both (по умолчанию both)
-
 python -m uvicorn service.app:app --host 0.0.0.0 --port 8000      # или: python service/run.py
 ```
 
-Открыть: http://localhost:8000 — карта (кнопка «Демо-запрос»), http://localhost:8000/docs — OpenAPI.
+Открыть: http://localhost:8000 — карта (кнопка «Демо-запрос»), http://localhost:8000/docs — OpenAPI,
+http://localhost:8000/health — состояние. Сервис стартует сразу после клонирования из снимка эталонных слоёв
+`service/data/*.geojson.gz`. Слой предсказаний моделей строится командой (нужен `data/train`, ~2 мин):
+`python scripts/build_service_data.py --source both` (какие модели использованы — `service/data/manifest.json`).
 
 ```bash
 # 1) справка по площадям (JSON; format=csv — таблица)
@@ -181,15 +237,80 @@ curl "http://localhost:8000/api/v1/summary?bbox=39.25,47.95,39.50,48.10&date_fro
 # 2) контуры гарей в Shapefile (zip: shp+shx+dbf+prj+cpg)
 curl -o burn_scars_shp.zip "http://localhost:8000/api/v1/burn-scars?bbox=39.25,47.95,39.50,48.10&format=shp"
 # 3) всё одним запросом: термоточки + гари + справка (область — bbox или GeoJSON-полигон в поле geometry)
-curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/json"      -d '{"bbox":[39.25,47.95,39.50,48.10],"date_from":"2024-09-15","date_to":"2024-10-10","source":"gt"}'
+curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/json" -d '{"bbox":[39.25,47.95,39.50,48.10],"date_from":"2024-09-15","date_to":"2024-10-10","source":"gt"}'
 ```
+
 В PowerShell вместо `curl` — `curl.exe` (или `Invoke-RestMethod`).
 
-## Тесты
+## 11. Тесты
 
-```powershell
+```
 python -m pytest -q
 ```
 
-Тесты, которым нужны данные, пропускаются, если `data/train`, `data/test` или `data/test_fake` отсутствуют.
-Официальных скриптов RLE/метрики нет — кодек проверяется по правилам ТЗ на ручных примерах (`tests/test_rle_spec.py`).
+Покрыто: I/O и обе раскладки meta, RLE по каждому правилу ТЗ, метрика, сборка/валидация submission, фолды, AF-модуль,
+сервис, устойчивость инференса (NaN/нули/отсутствующие чипы, коды выхода), побайтная воспроизводимость. Тесты, которым нужны
+данные, пропускаются, если нет `data/train`, `data/test` или `data/test_fake` (`python scripts/make_fake_test.py`).
+На Windows тесты сами передают подпроцессам `PYTHONIOENCODING=utf-8`.
+
+## 12. Структура репозитория
+
+```
+inference.py            единственная точка входа инференса (CLI)
+train.py                обучение: python train.py --module af|bs|all
+Dockerfile, Dockerfile.gpu, .dockerignore
+requirements.txt (GPU) / requirements-cpu.txt / requirements-base.txt / requirements.lock.txt
+configs/                inference.yaml, af_lgbm.yaml, folds_af.csv, folds_bs.csv (фиксированная валидация)
+src/firemon/
+  pipeline.py           конвейер инференса: реестры бэкендов AF/BS, потоки, профилировщик — МЕСТО ПОДКЛЮЧЕНИЯ МОДЕЛЕЙ
+  io.py                 чтение чипов → dict массивов (C,H,W) + имена каналов, meta (обе раскладки), win_path
+  rle.py                RLE encode / decode / validate (формат ТЗ)
+  metrics.py            F1_af, IoU_burn, mIoU_sev, Score; evaluate_submission
+  submission.py         сборка и валидация submission.csv по шаблону
+  splits.py             групповые фолды (тайл / пространственный блок) + временной сплит
+  features/             af_features.py (110 признаков AF)
+  models/af/            predictor.py (AFPredictor), pipeline.py / train_lgbm.py / dataset.py (обучение), rules.py (правила)
+  models/bs/            rules.py (baseline dNBR); BSPredictor — после слияния task/bs
+  postprocess.py, utils.py
+scripts/                check_data.py, check_submission.py, make_fake_test.py, build_service_data.py,
+                        make_pipeline_figure.py, bench_inference_parallel.py, af/ (исследования AF)
+service/                FastAPI-приложение, static/ (Leaflet), data/ (снимок слоёв)
+eda/                    eda_af.py, eda_bs.py, test_vs_train.py, tables/
+reports/                eda.md, baseline_review.md, af_module.md, service.md, experiments.md, submissions.md, speed.md,
+                        test_vs_train.md, figures/, tasklog/
+tests/                  pytest
+weights/                веса моделей (в git)
+docs/                   ТЗ и критерии (pdf + txt)
+data/, baseline/, out/, submissions/*.csv     не в git
+```
+
+### Разработка в нескольких worktree
+
+Модули делались параллельно в отдельных `git worktree` (`task/af`, `task/bs`, `task/eda`, `task/service`) рядом с основным:
+
+- **Общий `.venv`** основного worktree, **без `pip install -e .`** — editable-установка привязала бы пакет `firemon` к одному
+  worktree, и остальные молча импортировали бы чужой код.
+- **`PYTHONPATH` = `<свой worktree>\src`** в каждой сессии: `$env:PYTHONPATH = "$PWD\src"` (bash: `export PYTHONPATH=$PWD/src`).
+  Точки входа и тесты дополнительно сами добавляют свой `src/` в `sys.path`.
+- **Junction-ы** `data`, `baseline`, `weights` в каждом worktree указывают на каталоги основного
+  (`New-Item -ItemType Junction -Path data -Target ..\fire-monitoring\data`): данные не дублируются, веса сразу видны всем.
+  Следствие: файл весов, записанный в одном worktree, появляется как неотслеживаемый во всех — перед слиянием ветки сверять
+  его с веткой байт-в-байт.
+- ⚠️ **Не удаляйте worktree с junction-ами через `Remove-Item -Recurse`** (и `rm -rf` из Git Bash): команда пройдёт по junction
+  внутрь и **удалит общие `data/` и `weights/`**. Сначала снимите сами ссылки — `cmd /c rmdir data`, `cmd /c rmdir baseline`,
+  `cmd /c rmdir weights` (удаляет только ссылку), затем `git worktree remove <путь>`.
+
+## 13. Лицензии данных и моделей
+
+- **Данные** предоставлены организаторами; источники открытые: VIIRS (NASA, открытые данные), Sentinel-1/2 (Copernicus, свободная
+  лицензия), ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Данные о территориях/датах теста, продукты
+  FIRMS/VNP14/MCD64A1/FireCCI и ручная разметка теста **не используются**; модели работают только с содержимым чипа.
+- **Предобученные модели:** не используются — LightGBM обучен с нуля на train (при подключении BS-модели с предобученным
+  энкодером лицензия будет указана здесь и в отчёте).
+- **ПО** — только открытое: LightGBM (MIT), PyTorch (BSD-3), segmentation-models-pytorch (MIT), NumPy/SciPy/pandas (BSD),
+  rasterio (BSD-3), GeoPandas/Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet (BSD-2), Leaflet.draw (MIT),
+  Swagger UI (Apache-2.0); тексты лицензий Leaflet и Swagger UI — в `service/static/vendor/{leaflet,swagger}/LICENSE`.
+
+## 14. Команда
+
+Марк (git: MarkHub75). <!-- TEAM: впишите остальных участников и роли -->

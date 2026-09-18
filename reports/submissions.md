@@ -16,3 +16,10 @@
 - Потолок текущей связки: даже при F1_af = 1.0 Score ≤ 0.35 + вклад BS ≈ 0.61–0.63. Весь дальнейший рост — за счёт BS-модели.
 - Следующая отправка — после слияния `task/bs` (BSPredictor): ожидаемый файл `submissions/submission_<дата>_<коммит>.csv`,
   копия для отправки — `submissions/final_submission.csv`.
+
+## Состояние после задачи 05 (рефакторинг inference.py, Docker)
+
+`python inference.py --data-dir data/test --output out/submission.csv` на текущем `main` даёт файл, **побайтно совпадающий**
+с отправкой №2 (`sha256 69c22e9fd6ddb3a5…`) — в venv с torch cu124, в чистом venv с torch CPU и в Docker-образе `firemon`.
+Поэтому новая отправка не формировалась; `submissions/final_submission.csv` будет собран после подключения BSPredictor
+(порядок: слияние `task/bs` → запись в `BS_BACKENDS` → `inference.py` → `scripts/check_submission.py` → строка в этой таблице).

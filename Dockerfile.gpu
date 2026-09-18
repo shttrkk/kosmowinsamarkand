@@ -1,0 +1,31 @@
+# GPU-образ инференса (нужны драйвер NVIDIA + NVIDIA Container Toolkit на хосте).
+#
+#   docker build -f Dockerfile.gpu -t firemon:gpu .
+#   docker run --rm --gpus all -v /path/to/test:/data:ro -v /path/to/out:/out firemon:gpu --data-dir /data --output /out/submission.csv
+#
+# torch 2.6.0 + CUDA 12.4 уже в базовом образе; остальные зависимости — те же версии, что в requirements-base.txt.
+# Без --gpus all образ тоже работает (на CPU): --device auto сам выбирает устройство.
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-base.txt ./
+RUN pip install torchvision==0.21.0 -r requirements-base.txt
+
+COPY pyproject.toml inference.py train.py ./
+COPY configs ./configs
+COPY src ./src
+COPY weights ./weights
+
+ENTRYPOINT ["python", "inference.py"]
+CMD ["--help"]
