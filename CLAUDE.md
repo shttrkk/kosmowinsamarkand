@@ -38,6 +38,7 @@ mIoU_sev = (IoU(1)+IoU(2)+IoU(3))/3 по BS-чипам
 Score    = 0.35*F1_af + 0.35*IoU_burn + 0.30*mIoU_sev
 ```
 Если знаменатель 0 (класса нет ни в эталоне, ни в предсказании) — величина = 1. Если класс есть в эталоне, но не в предсказании — IoU = 0.
+Пиксели эталона с nodata=255: в `src/firemon/metrics.py` есть переключатель `ignore_nodata` (сейчас True — исключаются); default будет выставлен по официальному скрипту метрики после его появления (задача 1b).
 Организаторы выдают скрипт метрики вместе с baseline; когда он появится в `baseline/`, наша реализация в `src/firemon/metrics.py` должна давать идентичные числа (тест обязателен).
 
 ## 4. Данные
@@ -71,6 +72,8 @@ Test: только `chip_id, kind, width, height, gsd, valid_frac, cloud_frac` (
 
 ### Тест
 AF: 90 public + 90 private; BS: 44 + 45. Итого 269 чипов, 447 строк submission. Разделение public/private одновременно по территории и по времени → валидация должна быть групповой (по тайлу/пожару) и по возможности временной.
+
+В train только 2019–2024, а AOI-README говорит о сезонах 2019–2025 → private-тест почти наверняка содержит 2025 год. Временной сплит (`temporal_split`, val = 2024) считается основным индикатором private, групповой GroupKFold — вспомогательным. Улучшение засчитывается только при приросте на ОБОИХ сплитах; все агенты моделей отчитывают обе цифры.
 
 ## 5. Формат submission.csv
 
@@ -128,6 +131,7 @@ fire-monitoring/
 ### Что уже есть (задача 01) — использовать, не дублировать
 - Окружение: `.venv` на **Python 3.12.7** (3.10/3.11 на машине нет), torch 2.6.0+cu124, RTX 4070 12 ГБ. Запуск: `.\.venv\Scripts\python.exe …`. В PowerShell перед запуском скриптов с кириллическим выводом: `$env:PYTHONIOENCODING='utf-8'`.
 - **`aux` — зарезервированное имя устройства Windows.** Файлы `…/aux/X_AUX.tif` открываются обычным путём, но сам каталог нельзя перечислить/создать (`os.listdir`, `mkdir`, `Path.resolve`, `os.path.abspath`, Проводник, `Get-ChildItem` — ломаются). Для операций с каталогом — `firemon.io.win_path(path)` (префикс `\\?\`). Никогда не вызывать `abspath/resolve` на пути, оканчивающемся на `aux`.
+- `win_path()` — no-op на любой ОС, кроме Windows (`os.name != "nt"` → `str(path)`); на Windows делает путь абсолютным и добавляет `\\?\` без дублирования. **Любые OS-специфичные ветки обязаны иметь no-op для Linux** (организаторы и Docker — Linux): никаких `\\?\`, `os.name == "nt"`-логики и Windows-путей без такой защиты и без теста с `monkeypatch.setattr(os, "name", …)`. Python: `>=3.10,<3.13` (`pyproject.toml`); все пакеты `requirements.txt` имеют колёса manylinux x86_64 / cp312 (нужен glibc ≥ 2.28: Debian 11+/Ubuntu 20.04+, `python:3.12-slim` подходит).
 - В `data/train` есть пустые каталоги-пустышки из архива (`af/images`, `bs/pre`, `bs/post`, `bs/sar_pre`, `bs/sar_post`) — игнорировать.
 - API: `firemon.io.read_af_chip / read_bs_chip(data_dir, chip_id, with_mask, layers=…)` (есть ключи `valid`, `mask_valid`; `layers` — читать только нужные слои), `list_chips`, `read_meta`, `read_mask`; `firemon.rle`; `firemon.metrics.evaluate(af_preds, af_gts, bs_preds, bs_gts)` и `evaluate_submission`; `firemon.submission.build_submission / validate_submission`; `firemon.splits.load_folds("af"|"bs")`.
 - Чтение: AF ≈ 17 мс/чип (viirs+aux+mask), BS ≈ 70 мс/чип (все 5 слоёв + маска); узкое место — распаковка deflate, rasterio отпускает GIL → при необходимости читать в `ThreadPoolExecutor`.

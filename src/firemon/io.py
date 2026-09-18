@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import ntpath
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -39,12 +40,20 @@ BS_AUX_BANDS = ["dem", "slope", "landcover"]
 
 
 def win_path(path: str | Path) -> str:
-    """Путь, безопасный для каталогов с зарезервированными именами (aux) в Windows."""
+    """Путь, безопасный для каталогов с зарезервированными именами (aux) в Windows.
+
+    На любой другой ОС — no-op (организаторы и Docker работают на Linux). На Windows путь
+    приводится к абсолютному (префикс \\\\?\\ допустим только для абсолютных путей) и получает
+    префикс; уже имеющийся префикс и UNC-пути (\\\\server\\share) не трогаются.
+    """
+    if os.name != "nt":
+        return str(path)
+    p = str(path)
+    if p.startswith("\\\\"):  # уже \\?\…, \\.\… или UNC
+        return p
     # не os.path.abspath: в Windows он превращает «…\aux» в устройство «\\.\aux»
-    p = os.path.normpath(os.path.join(os.getcwd(), os.fspath(path)))
-    if os.name == "nt" and not p.startswith("\\\\"):
-        return "\\\\?\\" + p
-    return p
+    p = ntpath.normpath(p if ntpath.isabs(p) else ntpath.join(os.getcwd(), p))
+    return "\\\\?\\" + p
 
 
 def chip_path(data_dir: str | Path, kind: str, layer: tuple[str, str], chip_id: str) -> Path:

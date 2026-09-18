@@ -1,9 +1,33 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from firemon.io import (AF_AUX_BANDS, AF_VIIRS_BANDS, BS_AUX_BANDS, S1_BANDS, S2_BANDS, has_masks, list_chips,
-                        read_af_chip, read_bs_chip, read_mask, read_meta)
+                        read_af_chip, read_bs_chip, read_mask, read_meta, win_path)
+
+PREFIX = "\\\\?\\"
+
+
+def test_win_path_is_noop_off_windows(monkeypatch):
+    # только строки: pathlib нельзя инстанцировать при подменённом os.name
+    monkeypatch.setattr(os, "name", "posix")
+    for p in ("data/train/af/aux", "/mnt/test/bs/aux", "aux", "C:\\data\\aux"):
+        assert win_path(p) == p
+
+
+def test_win_path_prefix_on_windows(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "getcwd", lambda: "C:\\work")
+    assert win_path("C:\\data\\train\\af\\aux") == PREFIX + "C:\\data\\train\\af\\aux"
+    assert win_path("C:/data/train/af/aux") == PREFIX + "C:\\data\\train\\af\\aux"  # \\?\ не терпит «/»
+    # относительный путь сначала становится абсолютным: префикс допустим только для абсолютных
+    assert win_path("data\\train\\..\\test\\aux") == PREFIX + "C:\\work\\data\\test\\aux"
+    # без дублирования префикса, UNC не трогаем
+    once = win_path("C:\\data\\aux")
+    assert win_path(once) == once and once.count(PREFIX) == 1
+    assert win_path("\\\\server\\share\\aux") == "\\\\server\\share\\aux"
 
 
 def test_list_chips(train_dir):

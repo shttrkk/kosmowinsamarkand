@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "firemon"
 version = "0.1.0"
 description = "КосмоХакатон 2026: мониторинг природных пожаров (Active Fire + Burn Severity)"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 readme = "README.md"
 
 [tool.setuptools.packages.find]
