@@ -27,6 +27,8 @@ def main() -> int:
                     help="этапы BS: rules lgbm unet stack ensemble (по умолчанию все)")
     ap.add_argument("--weights-dir", default="weights",
                     help="BS: куда писать веса (для другого каталога кэш и итоги тоже отдельные — проверка воспроизводимости)")
+    ap.add_argument("--bs-unet-loss", default=None, choices=["ce_dice", "focal_dice", "lovasz", "ce_lovasz"],
+                    help="BS: лосс UNet (по умолчанию ce_dice); для экспериментов — вместе с --weights-dir")
     args = ap.parse_args()
     if args.module in ("af", "all"):
         from firemon.models.af.pipeline import train_af
@@ -37,7 +39,7 @@ def main() -> int:
     if args.module in ("bs", "all"):
         from firemon.models.bs.pipeline import run as run_bs
 
-        run_bs(args.data_dir or str(ROOT / "data" / "train"), args.bs_stages, args.weights_dir)
+        run_bs(args.data_dir or str(ROOT / "data" / "train"), args.bs_stages, args.weights_dir, args.bs_unet_loss)
     return 0
 
 

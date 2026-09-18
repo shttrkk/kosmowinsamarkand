@@ -25,12 +25,57 @@ def event_distance(probs: np.ndarray, sigma: float = 40.0) -> np.ndarray:
     """Расстояние (px) до оценённого центра события — пика ожидаемой степени, сглаженной гауссианом σ (≈0.8 км).
     Эталон размечает только «свой» пожар внутри буфера события (~4 км), буфер НЕ центрирован по чипу (EDA B4),
     поэтому центр оценивается по содержимому чипа (вероятности модели), а не по геометрии/геопривязке."""
+    cy, cx = event_center(probs, sigma)
+    h, w = np.asarray(probs).shape[1:]
+    yy, xx = np.ogrid[:h, :w]
+    return np.hypot(yy - cy, xx - cx)
+
+
+def event_center(probs: np.ndarray, sigma: float = 40.0, mode: str = "argmax", r_box: float | None = None,
+                 t_burn: float = 0.5) -> tuple[float, float]:
+    """Оценка центра события (y, x). mode:
+      argmax — пик ожидаемой степени, сглаженной гауссианом σ (текущий вариант);
+      clip   — то же, но координаты обрезаются рамкой ±r_box от центра чипа;
+      boxmax — пик ищется только внутри рамки;
+      cc     — p_burn-взвешенный центроид крупнейшей компоненты p_burn > t_burn внутри рамки (нет компонент → boxmax).
+    Рамочный приор: по EDA B4c центр буфера события смещён от центра чипа не более чем на ≈ ±170 px (q95 230)."""
     from ...features.bs_features import _gauss
 
     p = np.asarray(probs, np.float32)
+    h, w = p.shape[1:]
     g = _gauss(p[1] + 2.0 * p[2] + 3.0 * p[3], sigma)
-    cy, cx = np.unravel_index(int(g.argmax()), g.shape)
-    yy, xx = np.ogrid[:g.shape[0], :g.shape[1]]
+    c0y, c0x = (h - 1) / 2.0, (w - 1) / 2.0
+    if mode == "argmax" or r_box is None:
+        cy, cx = np.unravel_index(int(g.argmax()), g.shape)
+        return float(cy), float(cx)
+    y0, y1 = int(max(np.ceil(c0y - r_box), 0)), int(min(np.floor(c0y + r_box), h - 1))
+    x0, x1 = int(max(np.ceil(c0x - r_box), 0)), int(min(np.floor(c0x + r_box), w - 1))
+    if mode == "clip":
+        cy, cx = np.unravel_index(int(g.argmax()), g.shape)
+        return float(np.clip(cy, y0, y1)), float(np.clip(cx, x0, x1))
+    sub = g[y0:y1 + 1, x0:x1 + 1]
+    by, bx = np.unravel_index(int(sub.argmax()), sub.shape)
+    if mode == "boxmax":
+        return float(by + y0), float(bx + x0)
+    if mode == "cc":
+        pb = (1.0 - p[0])[y0:y1 + 1, x0:x1 + 1]
+        lab, n = ndi.label(pb > t_burn, structure=_S8)
+        if n == 0:
+            return float(by + y0), float(bx + x0)
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        sizes[0] = 0
+        k = int(sizes.argmax())
+        cy, cx = ndi.center_of_mass(pb * (lab == k))
+        return float(cy + y0), float(cx + x0)
+    raise ValueError(f"event_center: неизвестный mode {mode!r}")
+
+
+def event_distance_cfg(probs: np.ndarray, cfg: dict, decode: dict | None) -> np.ndarray:
+    ec = cfg.get("event_center") or {}
+    cy, cx = event_center(probs, float(ec.get("sigma", 40.0)), ec.get("mode", "argmax"), ec.get("r_box"),
+                          float((decode or {}).get("t_burn") or 0.5))
+    h, w = np.asarray(probs).shape[1:]
+    yy, xx = np.ogrid[:h, :w]
     return np.hypot(yy - cy, xx - cx)
 
 
@@ -190,7 +235,7 @@ def postprocess_bs(mask: np.ndarray, chip: dict, cfg: dict | None, probs: np.nda
             out[cloud] = out[idx[0][cloud], idx[1][cloud]]
             out[forbid] = 0
     if probs is not None and (cfg.get("event_keep_r") or cfg.get("event_zero_r")) and (out > 0).any():
-        dist = event_distance(probs)
+        dist = event_distance_cfg(probs, cfg, decode)
         if cfg.get("event_keep_r"):
             out = keep_components_touching(out, dist <= float(cfg["event_keep_r"]))
         if cfg.get("event_zero_r"):

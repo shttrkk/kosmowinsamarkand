@@ -24,7 +24,7 @@ from .common import cache_dir, weights_dir, decode_probs, evaluate_masks, fit_de
 
 log = get_logger("bs.lgbm")
 CACHE = cache_dir()
-BASE_GROUPS = [g for g in FEATURE_GROUPS if g not in ("lcrel", "rule", "geom", "event")]  # dNBR_rel добавляется по таблице фолда
+BASE_GROUPS = [g for g in FEATURE_GROUPS if g not in ("lcrel", "rule", "geom", "event", "med2")]  # dNBR_rel добавляется по таблице фолда
 FRAC = {"burn": 0.25, "near": 0.30, "cand": 0.10, "rest": 0.02}
 MINIMAL = ["dNBR", "RdNBR", "landcover"]
 

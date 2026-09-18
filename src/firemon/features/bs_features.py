@@ -49,6 +49,8 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     "lcrel": ["dNBR_rel"],
     "rule": ["rule_sev"],
     "geom": ["dist_center", "coord_x", "coord_y"],
+    # H4 (ночные эксперименты): медианы 3×3 прочих разностных индексов; в финальные модели НЕ входят (опция стека)
+    "med2": ["dMIRBI_med3", "dNBR2_med3", "RBR_med3"],
     "event": ["dist_strong_cc", "dist_strong_centroid", "dist_dnbr_centroid", "cc_rank", "cc_area_rel",
               "cc_area_log"],
 }
@@ -298,6 +300,10 @@ def compute_bs_features(chip: dict, lc_medians: dict[int, float] | None = None,
     if "rule" in want:
         f["rule_sev"] = rule_severity(_median(dnbr, 3), lc, scl_pre, scl_post)
 
+    if "med2" in want:
+        f["dMIRBI_med3"] = _median(ipost["MIRBI"] - ipre["MIRBI"], 3)
+        f["dNBR2_med3"] = _median(ipre["NBR2"] - ipost["NBR2"], 3)
+        f["RBR_med3"] = _median(dnbr / (ipre["NBR"] + 1.001), 3)
     if "geom" in want:
         # эталон обрезан буфером события (~4 км); буфер не центрирован по чипу, но слабый радиальный приор есть
         h, w = dnbr.shape

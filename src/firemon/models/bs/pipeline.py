@@ -56,7 +56,8 @@ def stage_rules(data_dir) -> dict:
     return res
 
 
-def run(data_dir: str, stages: list[str] | None = None, weights_dir: str | None = None) -> dict:
+def run(data_dir: str, stages: list[str] | None = None, weights_dir: str | None = None,
+        unet_loss: str | None = None) -> dict:
     """weights_dir — куда писать веса (по умолчанию weights/). Для другого каталога кэш и итоги тоже отдельные
     (data/cache/bs_<имя>/, reports/bs_results_<имя>.json): повторный прогон не затирает основную модель."""
     import os
@@ -87,7 +88,10 @@ def run(data_dir: str, stages: list[str] | None = None, weights_dir: str | None 
     if "unet" in stages:
         for tag, channels in UNETS.items():
             for split in ("group", "temporal", "full"):
-                r = unet.main(["--data-dir", data_dir, "--split", split, "--tag", tag, "--channels", channels, *UNET_ARGS])
+                uargs = list(UNET_ARGS)
+                if unet_loss:  # эксперименты с лоссом (например ce_lovasz) — только вместе с отдельным --weights-dir
+                    uargs[uargs.index("--loss") + 1] = unet_loss
+                r = unet.main(["--data-dir", data_dir, "--split", split, "--tag", tag, "--channels", channels, *uargs])
                 out[f"unet_{tag}_{split}"] = {k: v for k, v in r.items() if k != "history"}
         for split in ("group", "temporal"):
             for sfx, name in (("", f"{AVG_TAG}_{split}.npy"), ("_tta", f"avg14_{split}_tta.npy")):

@@ -28,7 +28,8 @@ from .lgbm import PARAMS, fit
 log = get_logger("bs.stack")
 OOF = cache_dir() / "bs_oof"
 GATE = 0.03
-STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel"]
+OPTIONAL_GROUPS = ("med2",)  # подключаются только флагом --extra-groups (эксперименты), в финальной модели их нет
+STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel" and g not in OPTIONAL_GROUPS]
 UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5",
               "unet_pburn_g20", "unet_pburn_g40", "dist_event"]
 N_UNET_FEATS = len(UNET_FEATS)
@@ -91,8 +92,34 @@ def build_rows(chips, probs, idx, frac: float, seed: int = 42):
     return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
 
 
+def _fit_any(X, y, n_rounds, valid, ordinal: bool):
+    """multiclass-бустер или (ordinal) три бинарных P(sev ≥ k), k = 1..3."""
+    if not ordinal:
+        return fit(X, y, None, STACK_PARAMS, n_rounds, valid=valid)
+    import lightgbm as lgb
+
+    params = {k: v for k, v in STACK_PARAMS.items() if k != "num_class"}
+    params["objective"] = "binary"
+    out = []
+    for k in (1, 2, 3):
+        dtr = lgb.Dataset(X, (y >= k).astype(np.int32), free_raw_data=False)
+        dva = lgb.Dataset(valid[0], (valid[1] >= k).astype(np.int32), reference=dtr)
+        out.append(lgb.train(params, dtr, num_boost_round=n_rounds, valid_sets=[dva],
+                             callbacks=[lgb.early_stopping(30, verbose=False)]))
+    return out
+
+
+def _predict_any(model, X) -> np.ndarray:
+    """→ (4, n): для ordinal — вероятности классов из монотонизированных P(≥k)."""
+    if not isinstance(model, list):
+        return model.predict(X, num_threads=PARAMS["num_threads"]).T
+    c = np.stack([b.predict(X, num_threads=PARAMS["num_threads"]) for b in model])
+    c = np.minimum.accumulate(c, axis=0)
+    return np.stack([1 - c[0], c[0] - c[1], c[1] - c[2], c[2]])
+
+
 def run_cv(chips, pu: dict, tag: str, n_rounds: int, frac: float, drop_unet: bool = False,
-           drop_feats: list[str] | None = None) -> dict:
+           drop_feats: list[str] | None = None, ordinal: bool = False) -> dict:
     ids = [c["chip_id"] for c in chips]
     gts = np.stack([c["mask"] for c in chips])
     splits = get_splits(ids)
@@ -122,14 +149,14 @@ def run_cv(chips, pu: dict, tag: str, n_rounds: int, frac: float, drop_unet: boo
             else:  # val-2024: вероятности UNet, обученного на ≤2023
                 Xva, yva = build_rows(chips, pu["temporal"], va, frac)
                 Xva = Xva[:, cols]
-            booster = fit(Xall[mtr], yall[mtr], None, STACK_PARAMS, n_rounds, valid=(Xva, yva, None))
-            iters.append(int(booster.best_iteration or n_rounds))
+            booster = _fit_any(Xall[mtr], yall[mtr], n_rounds, (Xva, yva, None), ordinal)
+            iters.append([int(b.best_iteration or n_rounds) for b in booster] if ordinal
+                         else int(booster.best_iteration or n_rounds))
             for i in va:
                 X, sel = stack_matrix(chips[i], pu[split][i])
                 if len(X):
-                    p = booster.predict(X[:, cols], num_threads=PARAMS["num_threads"]).T
-                    oof[i][:, sel] = p.astype(np.float16)
-            log.info("%s %s%d: %d строк, best_iter %d, %.0f с", tag, split, k, mtr.sum(), iters[-1], time.time() - t0)
+                    oof[i][:, sel] = _predict_any(booster, X[:, cols]).astype(np.float16)
+            log.info("%s %s%d: %d строк, best_iter %s, %.0f с", tag, split, k, mtr.sum(), iters[-1], time.time() - t0)
         val = np.concatenate([va for _, va in splits[split]])
         gt_d = {i: gts[i] for i in val}
         m_arg = evaluate_masks({i: decode_probs(oof[i]) for i in val}, gt_d)
@@ -167,12 +194,16 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--frac", type=float, default=0.35)
     ap.add_argument("--drop-unet", action="store_true", help="абляция: без признаков UNet (только ворота)")
     ap.add_argument("--drop-feats", nargs="*", default=None, help="абляция: исключить признаки по именам")
+    ap.add_argument("--ordinal", action="store_true", help="три бинарных стекера P(sev ≥ k) вместо multiclass")
+    ap.add_argument("--extra-groups", nargs="*", default=None, help=f"доп. группы признаков из {OPTIONAL_GROUPS}")
     args = ap.parse_args(argv)
     seed_everything(42, with_torch=False)
+    if args.extra_groups:
+        STACK_GROUPS[:] = [g for g in FEATURE_GROUPS if g != "lcrel" and (g not in OPTIONAL_GROUPS or g in args.extra_groups)]
     chips = load_chips(args.data_dir)
     pu = {s: np.load(OOF / f"{args.unet}_{s}{args.unet_suffix}.npy", mmap_mode="r") for s in ("group", "temporal")}
     if args.stage == "cv":
-        return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet, args.drop_feats)
+        return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet, args.drop_feats, args.ordinal)
     train_full(chips, pu["group"], args.rounds, args.frac, weights_dir() / "bs_stack.txt")
     return None
 

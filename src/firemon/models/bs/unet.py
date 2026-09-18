@@ -89,6 +89,22 @@ def make_loss(name: str, class_weights: torch.Tensor):
         tgt = torch.stack([(t >= k).float() for k in (1, 2, 3)], 1)
         return F.binary_cross_entropy_with_logits(lo[:, 1:].float(), tgt)
 
+    def _lovasz():
+        # Lovász-Softmax — выпуклая суррогатная функция IoU (метрика соревнования); реализация smp (MIT)
+        from segmentation_models_pytorch.losses import LovaszLoss
+
+        return LovaszLoss(mode="multiclass", per_image=False, ignore_index=255, from_logits=True)
+
+    if name in ("lovasz", "ce_lovasz"):
+        lov = _lovasz()
+
+        def lovasz(lo, t):
+            return lov(lo.float(), t)
+
+        def ce_lovasz(lo, t):
+            return 0.5 * ce_loss(lo, t, class_weights) + 0.5 * lov(lo.float(), t)
+
+        return {"lovasz": lovasz, "ce_lovasz": ce_lovasz}[name]
     return {"ce_dice": ce_dice, "focal_dice": focal_dice, "ordinal": ordinal}[name]
 
 
@@ -251,7 +267,7 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--tag", required=True)
     ap.add_argument("--encoder", default="resnet34")
     ap.add_argument("--arch", default="unet")
-    ap.add_argument("--loss", default="ce_dice", choices=["ce_dice", "focal_dice", "ordinal"])
+    ap.add_argument("--loss", default="ce_dice", choices=["ce_dice", "focal_dice", "ordinal", "lovasz", "ce_lovasz"])
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)

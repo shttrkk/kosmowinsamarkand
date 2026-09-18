@@ -48,3 +48,5 @@ eda/cache/
 
 # повторный прогон обучения BS (проверка воспроизводимости)
 /weights_repro/
+/weights_lovasz/
+/weights_lovasz_pure/

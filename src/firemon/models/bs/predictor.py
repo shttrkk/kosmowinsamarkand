@@ -102,7 +102,9 @@ class BSPredictor:
         if self.booster is not None:
             self.groups = list(FEATURE_GROUPS)
         elif self.stack is not None:
-            self.groups = [g for g in FEATURE_GROUPS if g != "lcrel"]
+            from .stack import STACK_GROUPS
+
+            self.groups = list(STACK_GROUPS)
         else:
             self.groups = groups_for(self.channels or [])
         self.names = feature_names(self.groups)
