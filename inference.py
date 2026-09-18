@@ -2,8 +2,12 @@
 
     python inference.py --data-dir /path/to/test --output /path/to/submission.csv
 
-Читает чипы из <data-dir>/af и <data-dir>/bs, пишет submission.csv по шаблону
-sample_submission.csv. Без интерактива, код выхода 0 при успехе.
+Необязательные аргументы: --sample-submission CSV, --config YAML, --device auto|cpu|cuda, --workers N, --profile.
+
+Порядок работы: конфиг → шаблон sample_submission.csv (он определяет состав строк) → AF-чипы → BS-чипы →
+сборка submission → валидация записанного файла → времена этапов. Без интерактива. Коды выхода:
+0 — файл записан и прошёл валидацию; 1 — файл записан, но не прошёл валидацию; 2 — нет входных данных/конфига.
+Модели подключаются в `src/firemon/pipeline.py` (реестры AF_BACKENDS / BS_BACKENDS), выбор — в configs/inference.yaml.
 """
 from __future__ import annotations
 
@@ -16,114 +20,121 @@ T_START = time.perf_counter()
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))  # работает и без `pip install -e .`
 
-import numpy as np  # noqa: E402
-
-from firemon.io import list_chips, read_af_chip, read_bs_chip  # noqa: E402
-from firemon.models.af.rules import predict_af_rules  # noqa: E402
-from firemon.models.bs.rules import predict_bs_rules  # noqa: E402
-from firemon.submission import (DEFAULT_SHAPES, build_submission, read_submission,  # noqa: E402
-                                shapes_from_meta, validate_submission, write_submission)
+from firemon.io import LAYERS, list_chips  # noqa: E402
+from firemon.pipeline import (BACKENDS, Profiler, RunContext, default_workers, missing_layers,  # noqa: E402
+                              run_backend)
+from firemon.submission import (build_submission, chip_kind, read_submission, shapes_from_meta,  # noqa: E402
+                                submission_rows, validate_submission, write_submission)
 from firemon.utils import get_logger, load_config, seed_everything  # noqa: E402
 
 log = get_logger("inference")
+EXIT_OK, EXIT_INVALID, EXIT_NO_INPUT = 0, 1, 2
+
+
+class InputError(Exception):
+    """Нет входных данных/конфига — понятное сообщение и код выхода 2 вместо трассировки."""
 
 
 def find_sample_submission(data_dir: Path, explicit: str | None) -> Path | None:
-    candidates = [Path(explicit)] if explicit else [data_dir / "sample_submission.csv",
-                                                    ROOT / "baseline" / "sample_submission.csv"]
-    for c in candidates:
-        if c.exists():
-            return c
+    """Шаблон: --sample-submission → <data-dir>/sample_submission.csv → baseline/sample_submission.csv."""
     if explicit:
-        raise FileNotFoundError(f"sample submission не найден: {explicit}")
+        if not Path(explicit).is_file():
+            raise InputError(f"--sample-submission: файл не найден: {explicit}")
+        return Path(explicit)
+    for c in (data_dir / "sample_submission.csv", ROOT / "baseline" / "sample_submission.csv"):
+        if c.is_file():
+            return c
     return None
 
 
-def chips_of_kind(data_dir: Path, kind: str, template_ids: list[str] | None) -> list[str]:
-    """Чипы к обработке: из шаблона (он определяет состав submission), иначе из meta.csv/каталога."""
-    if template_ids is not None:
-        return [c for c in template_ids if c[:2].lower() == kind]
-    try:
-        return list_chips(data_dir, kind)
-    except FileNotFoundError:
-        return []
-
-
-def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict) -> int:
-    template_ids = None
+def chips_by_kind(data_dir: Path, sample: Path | None) -> dict[str, list[str]]:
+    """Чипы к обработке: ровно те, что в шаблоне (порядок шаблона); без шаблона — из meta.csv/имён файлов."""
     if sample is not None:
-        template_ids = list(dict.fromkeys(read_submission(sample)["chip_id"]))
-    af_cfg, bs_cfg = cfg.get("af", {}), cfg.get("bs", {})
-    shapes = shapes_from_meta(data_dir)
-    n_failed = 0
-
-    t0 = time.perf_counter()
-    af_preds: dict[str, np.ndarray] = {}
-    for cid in chips_of_kind(data_dir, "af", template_ids):
+        ids = list(dict.fromkeys(read_submission(sample)["chip_id"]))
+        return {kind: [c for c in ids if chip_kind(c) == kind] for kind in BACKENDS}
+    log.warning("sample_submission.csv не найден — строки формируются по списку чипов из meta.csv/каталогов")
+    out = {}
+    for kind in BACKENDS:
         try:
-            chip = read_af_chip(data_dir, cid, with_mask=False, layers=("viirs",))
-            af_preds[cid] = predict_af_rules(chip, af_cfg.get("i4_min", 320.0), af_cfg.get("di45_min", 15.0))
-        except Exception as e:  # один битый чип не должен ронять весь submission
-            n_failed += 1
-            log.error("AF %s: %s — пустая маска", cid, e)
-            af_preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPES["af"]), np.uint8)
-    t_af = time.perf_counter() - t0
+            out[kind] = list_chips(data_dir, kind)
+        except (FileNotFoundError, OSError):
+            out[kind] = []
+    return out
 
-    t0 = time.perf_counter()
-    bs_ids = chips_of_kind(data_dir, "bs", template_ids)
-    if bs_cfg.get("model", "unet") == "rules":  # аварийный режим без моделей
-        bs_preds: dict[str, np.ndarray] = {}
-        thresholds = tuple(bs_cfg.get("dnbr_thresholds", (0.10, 0.27, 0.44)))
-        for cid in bs_ids:
-            try:
-                chip = read_bs_chip(data_dir, cid, with_mask=False, layers=("s2_pre", "s2_post", "aux"))
-                bs_preds[cid] = predict_bs_rules(chip, thresholds)
-            except Exception as e:
-                n_failed += 1
-                log.error("BS %s: %s — пустая маска", cid, e)
-                bs_preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPES["bs"]), np.uint8)
-    else:  # UNet (+LGBM) — конфиг configs/bs_inference.yaml, секция bs общего конфига его перекрывает
-        from firemon.models.bs.infer import load_bs_config, run_bs_inference
-        bs_preds, bs_failed, bs_timing = run_bs_inference(data_dir, bs_ids, load_bs_config(bs_cfg), shapes)
-        n_failed += bs_failed
-        log.info("BS: загрузка моделей %.2f с, чтение+предсказание %.2f с", bs_timing["load"], bs_timing["predict"])
-    t_bs = time.perf_counter() - t0
 
-    t0 = time.perf_counter()
-    if sample is not None:
-        n_rows = build_submission(af_preds, bs_preds, sample, output, strict=False)
-    else:
-        log.warning("sample_submission.csv не найден — строки формируются по списку чипов")
-        from firemon.rle import rle_encode
-        rows = [(c, 1, rle_encode(m == 1)) for c, m in af_preds.items()]
-        rows += [(c, k, rle_encode(m == k)) for c, m in bs_preds.items() for k in (1, 2, 3)]
-        write_submission(rows, output)
-        n_rows = len(rows)
-    errors = validate_submission(output, sample or output, shapes)
-    t_sub = time.perf_counter() - t0
+def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict, ctx: RunContext) -> int:
+    prof = ctx.profiler
+    with prof.stage("шаблон и meta.csv"):
+        chips = chips_by_kind(data_dir, sample)
+        ctx.shapes = shapes_from_meta(data_dir)
+    if not any(chips.values()):
+        raise InputError(f"в {data_dir} нет ни шаблона sample_submission.csv, ни чипов af/ и bs/")
+    # отдельные отсутствующие чипы — пустая маска и warning; но если на диске нет НИ ОДНОГО чипа из шаблона,
+    # это почти наверняка неверный --data-dir: лучше понятная ошибка, чем «успешный» пустой submission
+    if not any(not missing_layers(data_dir, kind, cid, layers=(next(iter(LAYERS[kind])),))
+               for kind, ids in chips.items() for cid in ids):
+        raise InputError(f"в {data_dir} не найдено ни одного чипа из шаблона {sample} — проверьте --data-dir "
+                         f"(ожидаются подкаталоги af/viirs, bs/sentinel2_pre, …)")
 
-    log.info("AF: %d чипов за %.2f с | BS: %d чипов за %.2f с | сборка+валидация: %.2f с",
-             len(af_preds), t_af, len(bs_preds), t_bs, t_sub)
-    log.info("submission: %s (%d строк), ошибок чтения чипов: %d", output, n_rows, n_failed)
+    preds, n_failed = {}, 0
+    for kind in BACKENDS:
+        with prof.stage(f"{kind}: всего"):
+            preds[kind], failed, used = run_backend(kind, data_dir, chips[kind], cfg.get(kind) or {}, ctx)
+        n_failed += failed
+        log.info("%s: %d чипов, бэкенд %s, %.2f с%s", kind.upper(), len(chips[kind]), used,
+                 prof.seconds(f"{kind}: всего"), f", не прочитано: {failed}" if failed else "")
+
+    with prof.stage("RLE + запись csv"):
+        if sample is not None:
+            n_rows = build_submission(preds["af"], preds["bs"], sample, output, strict=False)
+        else:
+            rows = submission_rows(preds["af"], preds["bs"])
+            write_submission(rows, output)
+            n_rows = len(rows)
+    with prof.stage("валидация записанного файла"):
+        errors = validate_submission(output, sample or output, ctx.shapes)
+
+    log.info("submission: %s (%d строк), чипов с пустой маской из-за ошибок чтения: %d", output, n_rows, n_failed)
     for e in errors[:20]:
         log.error("валидация: %s", e)
-    return 1 if errors else 0
+    if errors:
+        log.error("submission НЕ прошёл валидацию (%d ошибок)", len(errors))
+    return EXIT_INVALID if errors else EXIT_OK
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Инференс AF + BS → submission.csv")
-    ap.add_argument("--data-dir", required=True, type=Path)
-    ap.add_argument("--output", required=True, type=Path)
+    ap.add_argument("--data-dir", required=True, type=Path, help="каталог теста: af/, bs/, meta.csv, sample_submission.csv")
+    ap.add_argument("--output", required=True, type=Path, help="куда записать submission.csv (каталоги создаются)")
     ap.add_argument("--sample-submission", default=None,
                     help="по умолчанию <data-dir>/sample_submission.csv, затем baseline/sample_submission.csv")
     ap.add_argument("--config", default=str(ROOT / "configs" / "inference.yaml"))
-    args = ap.parse_args()
+    ap.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
+                    help="устройство для нейросетевых бэкендов (LightGBM и правила всегда на CPU)")
+    ap.add_argument("--workers", type=int, default=None, help="потоки чтения/признаков (по умолчанию из конфига)")
+    ap.add_argument("--profile", action="store_true", help="напечатать таблицу времени по этапам")
+    args = ap.parse_args(argv)
 
-    cfg = load_config(args.config)
-    seed_everything(int(cfg.get("seed", 42)), with_torch=False)  # заглушки на правилах torch не используют
-    sample = find_sample_submission(args.data_dir, args.sample_submission)
-    code = run(args.data_dir, args.output, sample, cfg)
-    log.info("Полное время инференса: %.2f с", time.perf_counter() - T_START)
+    prof = Profiler()
+    prof.add("старт Python + импорты", time.perf_counter() - T_START)
+    try:
+        if not args.data_dir.is_dir():
+            raise InputError(f"--data-dir: каталог не найден: {args.data_dir}")
+        if not Path(args.config).is_file():
+            raise InputError(f"--config: файл не найден: {args.config}")
+        cfg = load_config(args.config)
+        seed_everything(int(cfg.get("seed", 42)), with_torch=False)  # torch сидируют сами torch-бэкенды
+        workers = args.workers or int(cfg.get("workers") or 0) or default_workers()
+        ctx = RunContext(workers=max(1, workers), device=args.device, profiler=prof)
+        sample = find_sample_submission(args.data_dir, args.sample_submission)
+        code = run(args.data_dir, args.output, sample, cfg, ctx)
+    except InputError as e:
+        log.error("%s", e)
+        return EXIT_NO_INPUT
+    total = time.perf_counter() - T_START
+    if args.profile:
+        log.info("профиль (этапы внутри пула потоков — сумма по %d потокам):\n%s", ctx.workers, prof.table(total))
+    log.info("Полное время инференса: %.2f с", total)
     return code
 
 

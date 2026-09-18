@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from firemon.rle import rle_decode
-from firemon.submission import build_submission, read_submission, validate_submission, write_submission
+from firemon.submission import (build_submission, chip_kind, read_submission, shapes_from_meta,
+                                validate_submission, write_submission)
 
 AF_IDS = ["AF_te_000001", "AF_te_000002"]
 BS_IDS = ["BS_te_000001", "BS_te_000002"]
@@ -17,8 +18,10 @@ def _template_rows():
 
 @pytest.fixture()
 def template(tmp_path):
+    """Шаблон в формате организаторов: колонка rle пустая и БЕЗ кавычек (`AF_te_000001,1,`)."""
     path = tmp_path / "sample_submission.csv"
-    write_submission(_template_rows(), path)
+    lines = ["chip_id,class_id,rle"] + [f"{c},{k}," for c, k, _ in _template_rows()]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -136,3 +139,40 @@ def test_detects_touching_runs_and_bad_header(good, template, tmp_path):
 def test_row_order_is_free(good, template):
     _rewrite(good, lambda rows: rows[::-1])
     assert validate_submission(good, template, SHAPES) == []
+
+
+def test_chip_kind_by_prefix():
+    assert chip_kind("AF_te_000001") == chip_kind("AF_tr_000420") == chip_kind("af_te_000001") == "af"
+    assert chip_kind("BS_te_000001") == chip_kind("BS_tr_000224") == "bs"
+    with pytest.raises(ValueError):
+        chip_kind("XX_te_000001")
+
+
+def test_template_unquoted_empty_rle_is_accepted(template):
+    tpl = read_submission(template)
+    assert "," in template.read_text(encoding="utf-8").splitlines()[1] and '"' not in template.read_text(encoding="utf-8")
+    assert len(tpl["chip_id"]) == 8 and set(tpl["rle"]) == {""}
+
+
+def test_real_template(test_dir, tmp_path):
+    """Реальный sample_submission.csv: 447 строк = 269 class 1 + 89 class 2 + 89 class 3, id совпадают с meta."""
+    from collections import Counter
+
+    from firemon.io import list_chips
+
+    sample = test_dir / "sample_submission.csv"
+    tpl = read_submission(sample)
+    assert len(tpl["chip_id"]) == 447 and set(tpl["rle"]) == {""}
+    assert Counter(tpl["class_id"]) == {"1": 269, "2": 89, "3": 89}
+    af, bs = list_chips(test_dir, "af"), list_chips(test_dir, "bs")
+    assert {c for c in tpl["chip_id"] if chip_kind(c) == "af"} == set(af) and len(af) == 180
+    assert Counter(c for c in tpl["chip_id"] if chip_kind(c) == "bs") == {c: 3 for c in bs} and len(bs) == 89
+
+    shapes = shapes_from_meta(test_dir)  # общий meta.csv в корне
+    assert len(shapes) == 269 and shapes["AF_te_000001"] == (256, 256) and shapes["BS_te_000001"] == (512, 512)
+
+    out = tmp_path / "empty.csv"
+    assert build_submission({}, {}, sample, out, strict=False) == 447
+    assert validate_submission(out, sample, shapes) == []
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert all(line.endswith('""') for line in lines[1:])

@@ -312,7 +312,10 @@ def compute_bs_features(chip: dict, lc_medians: dict[int, float] | None = None,
     out = np.empty((len(names),) + dnbr.shape, np.float32)
     for i, n in enumerate(names):
         out[i] = f[n]
-    np.nan_to_num(out, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    # NaN/inf здесь невозможны: входы целочисленные, все деления защищены (см. _nd, +0.001, +0.5, lut ≥ 0.02) —
+    # полный проход nan_to_num по ~100 МБ на чип стоил ~15 % времени признаков. Страховка — только для float-входов.
+    if any(chip[k].dtype.kind == "f" for k in ("s2_pre", "s2_post", "s1_pre", "s1_post", "aux") if k in chip):
+        np.nan_to_num(out, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
     # пиксели без данных S2: физические признаки → 0 (флаги SCL/aux/lc остаются)
     if invalid.any():
         phys = [i for i, n in enumerate(names) if GROUP_OF[n] in ("spectral", "diff", "ctx", "lcrel")]

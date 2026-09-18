@@ -1,0 +1,5 @@
+# CPU-вариант (машина без GPU, Dockerfile): те же версии, torch без CUDA (~200 МБ вместо ~2.5 ГБ).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchvision==0.21.0+cpu
+-r requirements-base.txt

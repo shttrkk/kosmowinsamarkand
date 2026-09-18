@@ -58,13 +58,6 @@ def main() -> int:
     write_submission(rows, out_dir / "sample_submission.csv")
     print(f"sample_submission.csv: {len(rows)} строк")
 
-    # ФЕЙКОВЫЙ шаблон по всем train-чипам: для OOF-оценки через evaluate_submission и тестов,
-    # пока нет настоящего baseline/sample_submission.csv. НЕ является файлом организаторов.
-    full = [(c, 1, "") for c in read_meta(train_dir, "af")["chip_id"]]
-    full += [(c, k, "") for c in read_meta(train_dir, "bs")["chip_id"] for k in (1, 2, 3)]
-    fake = ROOT / "baseline" / "sample_submission_FAKE.csv"
-    write_submission(full, fake)
-    print(f"{fake}: {len(full)} строк (шаблон по train, только для тестов)")
     return 0
 
 

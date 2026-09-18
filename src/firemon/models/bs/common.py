@@ -121,8 +121,10 @@ def log_experiment(description: str, config: str, validation: str, m_group: dict
     """Добавляет строку в reports/experiments.md (обе цифры: групповой OOF / временной сплит)."""
     path = path or REPO_ROOT / "reports" / "experiments.md"
     text = path.read_text(encoding="utf-8")
-    nums = [int(l.split("|")[1]) for l in text.splitlines() if l.startswith("|") and l.split("|")[1].strip().isdigit()]
-    n = max(nums, default=0) + 1
+    import re
+
+    nums = [int(m.group(1)) for m in re.finditer(r"^\| BS-(\d+) \|", text, flags=re.M)]  # нумерация BS-строк: BS-N
+    n = f"BS-{max(nums, default=0) + 1}"
 
     def cell(key: str, f: str = "{:.4f}") -> str:
         parts = [f.format(m[key]) if m else "—" for m in (m_group, m_temporal)]

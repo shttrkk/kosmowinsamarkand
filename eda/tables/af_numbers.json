@@ -1,0 +1,317 @@
+{
+  "a1_fire_px": 9725,
+  "a1_fire_frac_all": 0.0003533136276971726,
+  "a1_fire_frac_valid": 0.00038531350533147103,
+  "a1_chips_with_fire": 296,
+  "a1_chips_no_fire": 124,
+  "a1_nfire_median_pos": 21.0,
+  "a1_nfire_max": 243,
+  "a1_nfire_q25_q75": [
+    8.0,
+    43.25
+  ],
+  "a1_meta_mismatch": 0,
+  "a1_top10pct_chips_share": 0.4322879177377892,
+  "a1_n_components": 3287,
+  "a1_comp_median": 2.0,
+  "a1_comp_max": 123,
+  "a1_single_px_comp_share": 0.40675387891694553,
+  "a1_single_px_fire_share": 0.13748071979434448,
+  "a1_le2_px_fire_share": 0.31352185089974294,
+  "a1_comp_per_pos_chip_median": 6.0,
+  "a1_comp_per_chip_max": 50,
+  "a2_I4_max": 358.2337341308594,
+  "a2_fire_sat367_share": 0.0,
+  "a2_fire_I4_ge355_share": 0.09892030848329049,
+  "a2_fire_I4_median_day": 340.3144836425781,
+  "a2_fire_I4_median_night": 311.1963195800781,
+  "a2_fire_d_median_day": 38.99371337890625,
+  "a2_fire_d_median_night": 28.07000732421875,
+  "a2_bg_I4_median_day": 303.28863525390625,
+  "a2_bg_I4_median_night": 282.3460998535156,
+  "a2_bg_I4_q99_day": 322.8527526855469,
+  "a2_bg_I4_q99_night": 294.85772705078125,
+  "a2_fire_d_lt10": 33,
+  "a2_fire_d_lt0": 15,
+  "a2_fire_I4_lt310_day": 0,
+  "a2_hot_nonfire_day": 13126,
+  "a2_hot_nonfire_night": 6,
+  "a2b_best_rule_day": {
+    "I4>": 329.0,
+    "d>": 25.0,
+    "F1": 0.9414471413781204,
+    "P": 0.9245368278355174,
+    "R": 0.9589875790953831,
+    "FP": 668,
+    "FN": 350
+  },
+  "a2b_best_rule_night": {
+    "I4>": 295.0,
+    "d>": 10.0,
+    "F1": 0.8033726812816189,
+    "P": 0.6713641488162345,
+    "R": 1.0,
+    "FP": 583,
+    "FN": 0
+  },
+  "a2b_best_rule_F1_total": 0.9213306471426466,
+  "a2b_fire_I4_min_day": 319.24871826171875,
+  "a2b_fire_I4_min_night": 295.0400695800781,
+  "a2b_fire_I4_q01_day": 326.98065185546875,
+  "a2b_fire_d_min_night": 10.035064697265625,
+  "a2b_fire_d_q01_day": 25.253936767578125,
+  "a3_best_feature_hard_day": "I4",
+  "a3_best_auc_hard_day": 0.9993012145376268,
+  "a3_auc_raw_I4_hard_day": 0.9993012145376268,
+  "a3_auc_raw_I4_rand_all": 0.9759970040396622,
+  "a3_auc_raw_d45_hard_day": 0.751397941730331,
+  "a3_auc_raw_d45_rand_all": 0.9605512571918228,
+  "a3_n_cand_nonfire": 589571,
+  "a3_n_bg": 210000,
+  "a4_mixed_daynight_chips": 6,
+  "a4_chips_day": 293,
+  "a4_fire_px_day": 8534,
+  "a4_bg_I4_day": 303.2998962402344,
+  "a4_base_fp_day": 54195,
+  "a4_chips_night": 127,
+  "a4_fire_px_night": 1191,
+  "a4_bg_I4_night": 282.6333312988281,
+  "a4_base_fp_night": 6,
+  "a4_auc_refl_day": {
+    "I1": 0.068810617497675,
+    "I2": 0.06154229406608448,
+    "I3": 0.10968485387570703,
+    "NDVI=(I2-I1)/(I2+I1)": 0.5468873970333232,
+    "I3/I2": 0.8205676369294735,
+    "I4/I5": 0.6936067344693483
+  },
+  "a4_glint_like_cand": 152876,
+  "a4_fire_I3_gt03": 270,
+  "a4_night_I1_finite_share": 0.0,
+  "a4_night_I1_abs_median": NaN,
+  "a4_night_I3_q99": NaN,
+  "a5_tiles": 70,
+  "a5_passes_per_tile_median": 3.5,
+  "a5_passes_per_tile_minmax": [
+    1,
+    31
+  ],
+  "a5_night_rule_fp": 654,
+  "a5_night_rule_fp_chips": 64,
+  "a5_night_rule_fp_lc_share": {
+    "10": 0.09174311926605505,
+    "30": 0.08256880733944955,
+    "40": 0.28593272171253825,
+    "50": 0.5152905198776758,
+    "80": 0.0045871559633027525,
+    "90": 0.019877675840978593
+  },
+  "a5_night_fire_lc_share": {
+    "10": 0.21578505457598657,
+    "30": 0.21242653232577666,
+    "40": 0.3316540722082284,
+    "50": 0.19815281276238456,
+    "60": 0.012594458438287154,
+    "80": 0.007556675062972292,
+    "90": 0.0218303946263644
+  },
+  "a5_night_rule_fp_d_median": 15.61151123046875,
+  "a5_night_fire_d_median": 28.07000732421875,
+  "a5_pers_any_px": 8618,
+  "a5_pers_night_px": 77,
+  "a5_base_fp_total": 54201,
+  "a5_base_fp_on_pers_any": 2504,
+  "a5_base_fp_on_pers_night": 29,
+  "a5_base_fp_night_total": 6,
+  "a5_tiles_with_pers_night": 7,
+  "a5_refire_px": 570,
+  "a5_fire_px_unique_loc": 8955,
+  "a5_night_rule_fp_on_pers_night": 161,
+  "a5_pers_night_lc_share": {
+    "10": 0.07792207792207792,
+    "30": 0.025974025974025976,
+    "40": 0.38961038961038963,
+    "50": 0.4935064935064935,
+    "90": 0.012987012987012988
+  },
+  "a6_fire_share_by_lc": {
+    "10": 0.13696658097686376,
+    "20": 0.0,
+    "30": 0.37244215938303343,
+    "40": 0.4214910025706941,
+    "50": 0.036709511568123396,
+    "60": 0.002159383033419023,
+    "80": 0.0034961439588688946,
+    "90": 0.02673521850899743
+  },
+  "a6_lc_nan_px": 123996,
+  "a6_meteo_auc_chip": {
+    "dem": 0.7199487794245859,
+    "t2m": 0.45605383609415867,
+    "rh2m": 0.3738012205754142,
+    "wind_speed": 0.5487685265911072
+  },
+  "a6_meteo_auc_pixel": {
+    "dem": 0.5094579635206268,
+    "t2m": 0.5797623020680622,
+    "rh2m": 0.3319681452151526,
+    "wind_speed": 0.6384969523864322
+  },
+  "a7_invalid_px_channel": 180151,
+  "a7_invalid_share_channel": 0.006544966924758184,
+  "a7_nan_I4I5_where_valid1": 2105781,
+  "a7_finite_I4I5_where_valid0": 0,
+  "a7_chips_validfrac_lt1_channel": 15,
+  "a7_chips_validfrac_lt1_meta": 14,
+  "a7_min_valid_frac": 0.45965576171875,
+  "a7_meta_vs_channel_maxdiff": 4.9731445312506395e-05,
+  "a7_chips_iovalid_lt1": 227,
+  "a7_invalid_share_io": 0.08304893856956845,
+  "a7_nan_I1_day_share": 0.09097700889419974,
+  "a7_nan_I1_night_share": 1.0,
+  "a7_nan_I2_day_share": 0.09097700889419974,
+  "a7_nan_I2_night_share": 1.0,
+  "a7_nan_I3_day_share": 0.09097700889419974,
+  "a7_nan_I3_night_share": 1.0,
+  "a7_nan_aux_px": {
+    "landcover": 123996,
+    "dem": 0,
+    "t2m": 418493,
+    "rh2m": 418493,
+    "wind_speed": 418493
+  },
+  "a7_invalid_in_edge_components_share": 0.21665211388615235,
+  "a7_fire_px_in_partial_chips": 4650,
+  "a7_fire_within_k_px_of_invalid": {
+    "1": 890,
+    "2": 1481,
+    "3": 2143,
+    "5": 3119
+  },
+  "a7_fire_on_invalid": 0,
+  "a7_mask_nodata_px": 0,
+  "a7b_nan_same_in_I4_I5": true,
+  "a7b_chips_with_nan": 223,
+  "a7b_chips_with_nan_share": 0.530952380952381,
+  "a7b_nan_share_all": 0.07650397164481026,
+  "a7b_nan_share_in_affected_chips": 0.14408819771668302,
+  "a7b_spearman_chip_senz_vs_nan": 0.9383471063892556,
+  "a7b_min_senz_with_nan": 36.209999084472656,
+  "a7b_chips_senz_0_30": {
+    "чипов": 173,
+    "доля чипов с NaN": 0.0,
+    "средняя доля NaN": 0.0
+  },
+  "a7b_chips_senz_30_45": {
+    "чипов": 93,
+    "доля чипов с NaN": 0.7419354838709677,
+    "средняя доля NaN": 0.04582279984669019
+  },
+  "a7b_chips_senz_45_71": {
+    "чипов": 154,
+    "доля чипов с NaN": 1.0,
+    "средняя доля NaN": 0.1809749850979099
+  },
+  "a7b_nan_share_day_night": [
+    0.08193881194339271,
+    0.0639653243417815
+  ],
+  "a7b_run_len_horizontal_q50_q95": [
+    2.0,
+    8.0
+  ],
+  "a7b_run_len_vertical_q50_q95": [
+    1.0,
+    3.0
+  ],
+  "a7b_I5_median_adjacent_vs_rest": [
+    289.1938171386719,
+    288.7489318847656
+  ],
+  "a7b_fire_adjacent_to_nan": 1077,
+  "a7b_fire_adjacent_to_nan_share": 0.11074550128534705,
+  "a7b_fire_px_in_chips_with_nan": 4639,
+  "a7b_fire_components_touching_nan": [
+    489,
+    1272
+  ],
+  "a8_mw_pvalue_I5_minus_t2m_SNPP_vs_NOAA20": {
+    "день": 0.2652416527271271,
+    "ночь": 0.9503019452095032
+  },
+  "a8_bg_I4_chip_median_range": [
+    245.17340087890625,
+    322.8545837402344
+  ],
+  "a8_bg_I4_chip_median_std_day": 10.392607688903809,
+  "a8_bg_I4_chip_median_std_night": 8.10020923614502,
+  "a8_sat_median_I4_I5": {
+    "день/NOAA20": 8.56317138671875,
+    "день/NOAA21": 6.60260009765625,
+    "день/SNPP": 8.404098510742188,
+    "ночь/NOAA20": 0.4797821044921875,
+    "ночь/NOAA21": -0.121551513671875,
+    "ночь/SNPP": 0.082763671875
+  },
+  "a9_tiles": 70,
+  "a9_chips": 420,
+  "a9_passes_per_tile_mean": 6.0,
+  "a9_unique_passes": 78,
+  "a9_chips_in_multi_tile_passes": 420,
+  "a9_tile_leak_between_folds": 0,
+  "a9_temporal_val_chips": 78,
+  "a9_temporal_val_fire_px": 2458,
+  "a9_candidates": 599255,
+  "a9_cand_recall": 0.9957840616966581,
+  "a9_results": [
+    {
+      "признаки": "3 признака (I4, I4−I5, z(I4−I5) 11×11)",
+      "схема": "случайный KFold по чипам",
+      "F1 OOF (порог 0.5)": 0.9127413916419741,
+      "F1 OOF (лучший порог)": 0.9139474882379723,
+      "лучший порог": 0.45000000000000007
+    },
+    {
+      "признаки": "3 признака (I4, I4−I5, z(I4−I5) 11×11)",
+      "схема": "GroupKFold по тайлу (folds_af.csv)",
+      "F1 OOF (порог 0.5)": 0.9127278265725745,
+      "F1 OOF (лучший порог)": 0.9132930513595167,
+      "лучший порог": 0.45000000000000007
+    },
+    {
+      "признаки": "3 признака (I4, I4−I5, z(I4−I5) 11×11)",
+      "схема": "временной сплит (val = 2024)",
+      "F1 OOF (порог 0.5)": 0.876537971998303,
+      "F1 OOF (лучший порог)": 0.899176147508827,
+      "лучший порог": 0.1
+    },
+    {
+      "признаки": "3 признака + «паспорт места» (dem, t2m, rh2m, wind, landcover)",
+      "схема": "случайный KFold по чипам",
+      "F1 OOF (порог 0.5)": 0.9308666017526777,
+      "F1 OOF (лучший порог)": 0.9323505654281099,
+      "лучший порог": 0.3500000000000001
+    },
+    {
+      "признаки": "3 признака + «паспорт места» (dem, t2m, rh2m, wind, landcover)",
+      "схема": "GroupKFold по тайлу (folds_af.csv)",
+      "F1 OOF (порог 0.5)": 0.9321765756570554,
+      "F1 OOF (лучший порог)": 0.9331716926807092,
+      "лучший порог": 0.40000000000000013
+    },
+    {
+      "признаки": "3 признака + «паспорт места» (dem, t2m, rh2m, wind, landcover)",
+      "схема": "временной сплит (val = 2024)",
+      "F1 OOF (порог 0.5)": 0.891695205479452,
+      "F1 OOF (лучший порог)": 0.905474677055567,
+      "лучший порог": 0.20000000000000004
+    },
+    {
+      "признаки": "правило I4>320 и I4−I5>15 (без обучения)",
+      "схема": "любая",
+      "F1 OOF (порог 0.5)": 0.24354993817832118,
+      "F1 OOF (лучший порог)": NaN,
+      "лучший порог": NaN
+    }
+  ]
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -24,23 +25,35 @@ def load_bs_config(inference_cfg: dict | None = None) -> dict:
 
 
 def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None = None,
-                     shapes: dict | None = None) -> tuple[dict[str, np.ndarray], int, dict]:
-    """→ (маски по chip_id, число сбойных чипов, тайминги). Битый чип → пустая маска, инференс не падает."""
+                     shapes: dict | None = None, profiler=None,
+                     require_models: bool = False) -> tuple[dict[str, np.ndarray], int, dict]:
+    """→ (маски по chip_id, число сбойных чипов, тайминги). Битый чип → пустая маска, инференс не падает.
+    profiler — `firemon.pipeline.Profiler` (этапы bs: …); require_models — исключение, если веса не загрузились
+    (тогда `run_backend` откатится на fallback из конфига)."""
     shapes = shapes or {}
+
+    def stage(name: str):
+        return profiler.stage(name) if profiler is not None else nullcontext()
+
     timing = {"load": 0.0, "predict": 0.0}
     preds: dict[str, np.ndarray] = {}
     if not chip_ids:
         return preds, 0, timing
     t0 = time.perf_counter()
-    predictor = BSPredictor(cfg).load()
+    with stage("bs: загрузка моделей"):
+        predictor = BSPredictor(cfg).load()
     timing["load"] = time.perf_counter() - t0
+    if require_models and not predictor.models and predictor.booster is None:
+        raise FileNotFoundError("BS: веса моделей не найдены (weights/bs_unet_*.pt)")
 
     def read(cid: str):
         """Чтение + признаки в фоновом потоке (deflate, numpy и cv2 отпускают GIL)."""
         try:
-            chip = read_bs_chip(data_dir, cid, with_mask=False)
-            chip["transform"] = chip["crs"] = None  # геопривязка модели не нужна и не используется
-            return cid, chip, predictor.prepare(chip)
+            with stage("bs: чтение чипов"):
+                chip = read_bs_chip(data_dir, cid, with_mask=False)
+            chip["transform"] = chip["crs"] = None  # геопривязка модели не нужна и не используется (в тесте её нет)
+            with stage("bs: признаки"):
+                return cid, chip, predictor.prepare(chip)
         except Exception as e:  # noqa: BLE001
             log.error("BS %s: ошибка чтения: %s — пустая маска", cid, e)
             return cid, None, None
@@ -65,7 +78,8 @@ def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None
         chips_iter = prefetch(2 * bs)
         batch: list[tuple[str, dict, object]] = []
 
-        stage2 = ThreadPoolExecutor(1)  # этап 2 (LGBM + постобработка) батча k идёт параллельно с UNet батча k+1
+        stage2 = ThreadPoolExecutor(2)  # этап 2 (LGBM + постобработка) батча k идёт параллельно с UNet батча k+1
+        ex2 = ThreadPoolExecutor(4)     # свой пул этапа 2: в общем ex его задачи стояли бы в очереди за prefetch
         running: list = []
 
         def one_by_one(items) -> list[np.ndarray]:
@@ -82,7 +96,8 @@ def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None
 
         def finish(items, probs) -> None:
             try:
-                masks = predictor.second_stage([c for _, c, _ in items], [f for _, _, f in items], probs, ex)
+                with stage("bs: стек-LGBM + постобработка"):
+                    masks = predictor.second_stage([c for _, c, _ in items], [f for _, _, f in items], probs, ex2)
             except Exception as e:  # noqa: BLE001
                 log.error("BS батч (этап 2): %s — повтор по одному чипу", e)
                 masks = one_by_one(items)
@@ -99,7 +114,8 @@ def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None
                     preds[cid] = m
                 return
             try:
-                probs = predictor.first_stage([f for _, _, f in items])
+                with stage("bs: UNet"):
+                    probs = predictor.first_stage([f for _, _, f in items])
             except Exception as e:  # noqa: BLE001 — батч упал: пробуем по одному
                 log.error("BS батч (этап 1): %s — повтор по одному чипу", e)
                 for (cid, _, _), m in zip(items, one_by_one(items)):
@@ -121,5 +137,6 @@ def run_bs_inference(data_dir: str | Path, chip_ids: list[str], cfg: dict | None
         for fut in running:
             fut.result()
         stage2.shutdown()
+        ex2.shutdown()
     timing["predict"] = time.perf_counter() - t0
     return preds, n_failed, timing

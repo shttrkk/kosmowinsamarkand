@@ -1,0 +1,21 @@
+{
+ "built_at": "2026-09-18T18:01:02Z",
+ "pred_models": {
+  "af": "AFPredictor",
+  "bs": "rules-stub"
+ },
+ "counts": {
+  "gt": {
+   "hotspots": 9725,
+   "burn_scars": 43674
+  },
+  "pred": {
+   "hotspots": 9749,
+   "burn_scars": 49323
+  }
+ },
+ "n_chips": {
+  "af": 420,
+  "bs": 224
+ }
+}

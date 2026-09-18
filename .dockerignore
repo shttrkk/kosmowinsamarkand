@@ -1,0 +1,22 @@
+# В образ идёт только то, что перечислено в COPY (код, конфиги, веса); всё тяжёлое и локальное — мимо контекста сборки
+.git
+.venv
+venv
+data
+baseline
+out
+submissions
+reports
+docs
+eda
+prompts
+tests
+service
+scripts
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.playwright-mcp
+*.tar
+*.zip
+*.log

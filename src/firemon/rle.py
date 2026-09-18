@@ -37,6 +37,11 @@ def _parse(rle: str) -> tuple[np.ndarray, np.ndarray]:
     return values[0::2], values[1::2]
 
 
+def rle_pixel_count(rle: str) -> int:
+    """Число пикселей маски по RLE-строке без декодирования (сумма длин серий)."""
+    return int(_parse(rle)[1].sum())
+
+
 def validate_rle(rle: str, shape: tuple[int, int]) -> None:
     """Кидает ValueError, если RLE нарушает формат ТЗ. Пустая строка валидна."""
     starts, lengths = _parse(rle)

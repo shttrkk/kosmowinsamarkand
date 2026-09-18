@@ -2,6 +2,8 @@
 /data/
 /baseline/
 /out/
+# отправки на лидерборд: RLE-файлы по 10+ МБ, воспроизводятся командой inference.py
+/submissions/*.csv
 
 # растровые/векторные тяжёлые артефакты
 *.tif
@@ -34,3 +36,12 @@ dist/
 Thumbs.db
 .DS_Store
 *.log
+
+# артефакты скриншотов (playwright)
+.playwright-mcp/
+
+# EDA: кэш признаков пересчитывается скриптами eda/*.py
+eda/cache/
+
+# временные lock-файлы MS Office (презентация открыта в PowerPoint)
+~$*
