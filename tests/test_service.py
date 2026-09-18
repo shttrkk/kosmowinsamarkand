@@ -243,6 +243,47 @@ def test_clip_reduces_area(client, service_data):
     assert west["area_total_ha"] + east["area_total_ha"] == pytest.approx(full["area_total_ha"], rel=1e-3)
 
 
+def test_polygon_query_areas_consistent(client, service_data):
+    """Произвольный полигон (не bbox): by_severity суммируется в area_total_ha, clip не увеличивает площади."""
+    chips = read_layers(service_data)["chips"]
+    minx, miny, maxx, maxy = chips[chips["chip_id"] == "BS_tr_000202"].geometry.iloc[0].bounds
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    # ромб с дополнительной вершиной: режет гарь наискось, ни одна сторона не параллельна сетке пикселей
+    ring = [[cx, miny], [maxx, cy], [cx + (maxx - cx) * 0.3, maxy], [minx, cy + (maxy - cy) * 0.4], [cx, miny]]
+    body = {"geometry": {"type": "Polygon", "coordinates": [ring]}, "date_from": "2024-09-01", "date_to": "2024-10-31"}
+    j = client.post("/api/v1/query", json=body).json()
+    s = j["summary"]
+    assert j["meta"]["n_clipped"] > 0 and s["area_total_ha"] > 0
+    assert sum(v["area_ha"] for v in s["by_severity"].values()) == pytest.approx(s["area_total_ha"], abs=0.01)
+    feats = j["burn_scars"]["features"]
+    assert sum(f["properties"]["area_ha"] for f in feats) == pytest.approx(s["area_total_ha"], abs=0.01)
+
+    full = client.get("/api/v1/burn-scars", params={"bbox": f"{minx - 0.01},{miny - 0.01},{maxx + 0.01},{maxy + 0.01}",
+                                                    **{k: body[k] for k in ("date_from", "date_to")}}).json()
+    before = {f["properties"]["contour_id"]: f["properties"]["area_ha"] for f in full["features"]}
+    assert set(f["properties"]["contour_id"] for f in feats) <= set(before)
+    n_smaller = 0
+    for f in feats:
+        p = f["properties"]
+        assert 0 < p["area_ha"] <= before[p["contour_id"]] + 1e-4, p["contour_id"]
+        n_smaller += p["area_ha"] < before[p["contour_id"]] - 1e-4
+    assert n_smaller > 0 and s["area_total_ha"] < sum(before.values())
+    # площадь в атрибуте = площади обрезанной геометрии, пересчитанной в UTM
+    gdf = gpd.GeoDataFrame.from_features(feats, crs="EPSG:4326")
+    assert gdf.geometry.is_valid.all()
+    assert gdf.to_crs(32637).area.sum() / 1e4 == pytest.approx(s["area_total_ha"], rel=1e-3)
+
+
+def test_docs_served_offline(client):
+    """/docs подключает swagger-ui только из локального static/vendor — без CDN."""
+    html = client.get("/docs").text
+    assert "/static/vendor/swagger/swagger-ui-bundle.js" in html and "/static/vendor/swagger/swagger-ui.css" in html
+    assert "cdn." not in html and "https://" not in html
+    for f in ("swagger-ui-bundle.js", "swagger-ui.css"):
+        assert client.get(f"/static/vendor/swagger/{f}").status_code == 200
+    assert client.get("/openapi.json").json()["paths"]["/api/v1/query"]
+
+
 def test_fallback_snapshot_loads(service_data, tmp_path):
     for f in service_data.glob("*.geojson.gz"):
         (tmp_path / f.name).write_bytes(f.read_bytes())

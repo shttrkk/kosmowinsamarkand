@@ -267,12 +267,16 @@ def geodesic_area_km2(geom: BaseGeometry) -> float:
 def summarize(store: Store, scars: ScarResult, hotspot_idx: np.ndarray, geom: BaseGeometry,
               d0: date | None, d1: date | None, source: str) -> dict:
     cls = store.s_class[scars.idx]
-    by = {k: float(scars.area_ha[cls == k].sum()) for k in (1, 2, 3)}
-    total = sum(by.values())
+    raw = {k: float(scars.area_ha[cls == k].sum()) for k in (1, 2, 3)}
+    total = round(sum(raw.values()), 2)  # итог — от точной суммы контуров
+    by = {k: round(v, 2) for k, v in raw.items()}
+    # остаток округления (≤ 0.01 га) отдаём крупнейшему классу: by_severity всегда сходится с area_total_ha
+    top = max(by, key=by.get)
+    by[top] = round(by[top] + total - sum(by.values()), 2)
     dn = store.hotspots["daynight"].to_numpy(dtype=object)[hotspot_idx] if len(hotspot_idx) else np.array([])
     return {
-        "area_total_ha": round(total, 2),
-        "by_severity": {str(k): {"area_ha": round(v, 2), "share_pct": round(100 * v / total, 2) if total else 0.0,
+        "area_total_ha": total,
+        "by_severity": {str(k): {"area_ha": v, "share_pct": round(100 * v / total, 2) if total else 0.0,
                                  "label": SEVERITY_LABELS[k]} for k, v in by.items()},
         "n_contours": int((cls > 0).sum()),
         "n_fire_events": int(store.scars["fire_event_id"].iloc[scars.idx].nunique()) if len(scars.idx) else 0,

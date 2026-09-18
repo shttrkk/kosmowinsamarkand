@@ -22,6 +22,7 @@ for p in (ROOT, ROOT / "src"):  # работает и без `pip install -e .`
         sys.path.insert(0, str(p))
 
 from fastapi import FastAPI, Query, Request  # noqa: E402
+from fastapi.openapi.docs import get_swagger_ui_html  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -68,7 +69,9 @@ class _Params:
 
 
 def create_app(data_dir: Path | str | None = None) -> FastAPI:
+    # docs_url=None: свой /docs на локальном swagger-ui (static/vendor/swagger) — работает без интернета
     app = FastAPI(title="Мониторинг природных пожаров — информационно-аналитический сервис", version="1.0",
+                  docs_url=None, redoc_url=None,
                   description="Термоточки VIIRS, контуры гарей Sentinel-2 со степенью поражения и справка "
                               "по площадям для произвольного полигона/bbox и интервала дат. "
                               "Работает на подготовленном наборе сцен (обучающие чипы с геопривязкой).")
@@ -202,6 +205,13 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
         return summary_response(_Params(None, bbox, date_from, date_to, source), format)
 
     # ───────────── веб-интерфейс ─────────────
+
+    @app.get("/docs", include_in_schema=False)
+    def docs():
+        return get_swagger_ui_html(openapi_url=app.openapi_url, title=app.title + " — API",
+                                   swagger_js_url="/static/vendor/swagger/swagger-ui-bundle.js",
+                                   swagger_css_url="/static/vendor/swagger/swagger-ui.css",
+                                   swagger_favicon_url="/static/vendor/swagger/favicon-32x32.png")
 
     @app.get("/", include_in_schema=False)
     def index():
