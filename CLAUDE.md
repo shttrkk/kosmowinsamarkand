@@ -139,6 +139,13 @@ fire-monitoring/
 - RLE шумных BS-масок длиннее стандартного лимита поля `csv` (131072) — читать submission только через `firemon.submission.read_submission` (лимит поднят) или pandas.
 - Фейковый тест: `python scripts/make_fake_test.py` → `data/test_fake/` (20 AF + 10 BS) и `baseline/sample_submission_FAKE.csv` (шаблон по всему train для OOF-оценки через `evaluate_submission`; НЕ файл организаторов).
 
+### Модуль AF (задача 03) — использовать, не дублировать
+- `firemon.models.af.predictor.AFPredictor(cfg).load()` → `predict(chip)` (маска 0/1), `predict_proba(chip)`, `predict_many(chips)`; функция `predict_af(chip)`. Веса: `weights/af_lgbm_fold{0..4}.txt` + `af_lgbm_meta.json` (порог, список признаков). Нет весов → `inference.py` откатывается на `rules.predict_af_context` (контекстное правило, OOF F1 0.8965).
+- Признаки: `firemon.features.af_features` — `compute_af_features(chip)` (F,H,W), `af_feature_rows(chip, mask)` (n,F), `candidate_mask`, `FEATURE_NAMES` (110). Модель обучается и применяется ТОЛЬКО на кандидатах (recall кандидатов на train 100 %).
+- Метрики AF: OOF F1 0.9686 (GroupKFold), 0.9560 (temporal 2024). Постобработка (гистерезис и др.) проверена и отклонена. Детали — `reports/af_module.md`.
+- Кэш пиксельного датасета — `data/cache/af_train.npz` (npz, не parquet: в окружении нет `pyarrow`).
+- `scripts/make_fake_test.py` ВСЕГДА перезаписывает `baseline/sample_submission_FAKE.csv`, даже при `--out-dir` вне репозитория.
+
 ## 9. Формат отчёта о выполненной задаче
 
 В конце каждой задачи агент пишет краткий отчёт (в ответе и в `reports/tasklog/<номер>_<имя>.md`): что сделано, какие файлы, как запустить, какие тесты прошли, метрики (если есть), что не получилось/открытые вопросы, что менять в CLAUDE.md.
