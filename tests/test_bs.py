@@ -1,0 +1,195 @@
+"""BS-модуль: признаки, декодирование, постобработка, BSPredictor (CPU, без данных и без сети)."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from firemon.features.bs_features import (FEATURE_NAMES, UNET_CHANNELS, compute_bs_features, feature_names)
+from firemon.models.bs.common import decode_probs, fit_decode
+from firemon.models.bs.postprocess import fill_holes, median_labels, postprocess_bs, remove_small
+from firemon.models.bs.rules import fit_lc_thresholds, predict_bs_rules
+
+
+def make_chip(seed: int = 0, size: int = 512, with_mask: bool = False) -> dict:
+    """Синтетический BS-чип с облаками, nodata S2 (SCL=0, нули в каналах) и nodata S1."""
+    rng = np.random.RandomState(seed)
+    def s2():
+        a = rng.randint(100, 5000, (10, size, size)).astype(np.uint16)
+        a[9] = rng.choice([4, 5, 5, 5, 6, 8, 9, 10, 3, 2, 11], (size, size))
+        return a
+    pre, post = s2(), s2()
+    post[:, :40, :60] = 0            # nodata: нулевые отражения → деление на 0 в индексах
+    pre[:9, 100:120, 100:120] = 0    # нули без флага SCL
+    post[9, 200:300, 200:300] = 9    # облако
+    s1_pre = rng.randint(-3000, 0, (2, size, size)).astype(np.int16)
+    s1_post = rng.randint(-3000, 0, (2, size, size)).astype(np.int16)
+    s1_post[:, -50:, :] = 0
+    aux = np.stack([rng.randint(0, 300, (size, size)), rng.randint(0, 13, (size, size)),
+                    rng.choice([10, 30, 40, 50, 80, 90, 0], (size, size))]).astype(np.int16)
+    chip = {"chip_id": f"BS_syn_{seed}", "kind": "bs", "s2_pre": pre, "s2_post": post, "s1_pre": s1_pre,
+            "s1_post": s1_post, "aux": aux, "valid": (pre[9] != 0) & (post[9] != 0), "mask": None}
+    if with_mask:
+        chip["mask"] = rng.randint(0, 4, (size, size)).astype(np.uint8)
+    return chip
+
+
+def test_features_shape_finite_names():
+    f = compute_bs_features(make_chip())
+    assert f.shape == (len(FEATURE_NAMES), 512, 512) and f.dtype == np.float32
+    assert np.isfinite(f).all()
+    assert len(set(FEATURE_NAMES)) == len(FEATURE_NAMES)
+    assert set(UNET_CHANNELS) <= set(FEATURE_NAMES)
+
+
+def test_features_groups_subset_consistent():
+    chip = make_chip(1)
+    full = compute_bs_features(chip)
+    groups = ["diff", "lc"]
+    sub = compute_bs_features(chip, groups=groups)
+    names = feature_names(groups)
+    assert sub.shape[0] == len(names)
+    for i, n in enumerate(names):
+        np.testing.assert_array_equal(sub[i], full[FEATURE_NAMES.index(n)])
+
+
+def test_features_deterministic_and_nodata_zeroed():
+    chip = make_chip(2)
+    a, b = compute_bs_features(chip), compute_bs_features(chip)
+    np.testing.assert_array_equal(a, b)
+    assert a[FEATURE_NAMES.index("invalid"), :40, :60].all()
+    assert (a[FEATURE_NAMES.index("dNBR"), :40, :60] == 0).all()
+
+
+def test_decode_probs():
+    p = np.zeros((4, 2, 2), np.float32)
+    p[:, 0, 0] = [0.7, 0.1, 0.1, 0.1]
+    p[:, 0, 1] = [0.45, 0.30, 0.20, 0.05]
+    p[:, 1, 0] = [0.1, 0.2, 0.3, 0.4]
+    p[:, 1, 1] = [0.4, 0.25, 0.3, 0.05]
+    np.testing.assert_array_equal(decode_probs(p), [[0, 0], [3, 0]])
+    np.testing.assert_array_equal(decode_probs(p, 0.5), [[0, 1], [3, 2]])
+    np.testing.assert_array_equal(decode_probs(p, 0.5, (1.0, 1.0, 2.0)), [[0, 1], [3, 2]])
+    np.testing.assert_array_equal(decode_probs(p, 0.5, (1.5, 1.0, 1.0)), [[0, 1], [3, 1]])
+
+
+def test_fit_decode_recovers_threshold():
+    rng = np.random.RandomState(0)
+    gt = (rng.random_sample((2, 64, 64)) < 0.3).astype(np.uint8)
+    pb = np.where(gt > 0, 0.45, 0.35) + rng.normal(0, 0.01, gt.shape)  # идеальный порог ≈ 0.40
+    probs = np.stack([1 - pb, pb, np.zeros_like(pb), np.zeros_like(pb)], axis=1)
+    dec = fit_decode(probs, gt)
+    assert 0.36 <= dec["t_burn"] <= 0.44 and dec["iou_burn"] > 0.99
+
+
+def test_postprocess_ops():
+    m = np.zeros((32, 32), np.uint8)
+    m[2:4, 2:4] = 1                 # компонента 4 px
+    m[10:25, 10:25] = 2
+    m[15:17, 15:17] = 0             # дыра 4 px
+    m[12, 12] = 3                   # одиночный пиксель другой степени
+    out = remove_small(m, 5)
+    assert out[2:4, 2:4].sum() == 0 and out[11, 11] == 2
+    out = fill_holes(m, 10)
+    assert (out[15:17, 15:17] == 2).all() and out[0, 0] == 0
+    out = median_labels(m, 3)
+    assert out[12, 12] == 2 and ((out > 0) == (m > 0)).all()
+    chip = make_chip(3, size=32)
+    chip["s2_post"][9] = 5
+    chip["s2_pre"][9] = 5
+    chip["s2_post"][9, 10:25, 10:18] = 9
+    out = postprocess_bs(m, chip, {"scl_zero": True, "min_component_px": 5, "fill_holes_px": 10})
+    assert out[10:25, 10:18].sum() == 0 and out[20, 20] == 2 and set(np.unique(out)) <= {0, 1, 2, 3}
+
+
+def test_rules_and_lc_thresholds():
+    chips = [make_chip(s, size=64, with_mask=True) for s in range(3)]
+    thr = fit_lc_thresholds(chips, n_rounds=1)
+    assert all(t[0] < t[1] < t[2] for t in thr.values())
+    pred = predict_bs_rules(chips[0], lc_thresholds=thr)
+    assert pred.shape == (64, 64) and pred.dtype == np.uint8 and pred.max() <= 3
+    assert (pred[~chips[0]["valid"]] == 0).all()
+
+
+@pytest.fixture(scope="module")
+def tiny_checkpoint(tmp_path_factory):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("segmentation_models_pytorch")
+    from firemon.models.bs.unet import build_unet
+
+    torch.manual_seed(0)
+    model = build_unet("resnet18", len(UNET_CHANNELS), pretrained=False)
+    path = tmp_path_factory.mktemp("w") / "bs_unet_tiny.pt"
+    norm = {"channels": UNET_CHANNELS, "mean": [0.0] * len(UNET_CHANNELS), "std": [1.0] * len(UNET_CHANNELS)}
+    torch.save({"state_dict": {k: (v.half() if v.is_floating_point() else v) for k, v in model.state_dict().items()},
+                "encoder": "resnet18", "arch": "unet", "loss": "ce_dice", "channels": UNET_CHANNELS, "norm": norm}, path)
+    return path
+
+
+def test_predictor_cpu(tiny_checkpoint, monkeypatch):
+    """CPU-режим обязан работать без CUDA: принудительно device=cpu и «выключенная» CUDA."""
+    import torch
+
+    from firemon.models.bs.predictor import BSPredictor
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    cfg = {"device": "cpu", "unet_weights": [str(tiny_checkpoint)], "use_lgbm": False, "num_threads": 2,
+           "decode": {"t_burn": 0.3, "w": [1.0, 1.0, 1.0]}, "postprocess": {"scl_zero": True, "min_component_px": 4}}
+    pred = BSPredictor(cfg).load()
+    assert pred.device.type == "cpu" and pred.models
+    chip = make_chip(5)
+    a = pred.predict(chip)
+    b = pred.predict(chip)
+    assert a.shape == (512, 512) and a.dtype == np.uint8 and set(np.unique(a)) <= {0, 1, 2, 3}
+    np.testing.assert_array_equal(a, b)  # детерминизм
+    assert (a[:40, :60] == 0).all()      # nodata S2 → 0 (scl_zero)
+    # три бинарные маски классов не пересекаются по построению
+    assert sum((a == k).astype(int) for k in (1, 2, 3)).max() <= 1
+    # батч = по одному
+    c2 = make_chip(6)
+    batch = pred.predict_batch([chip, c2])
+    np.testing.assert_array_equal(batch[0], a)
+
+
+def test_predictor_stack_cpu(tiny_checkpoint, tmp_path, monkeypatch):
+    """Полный путь UNet → стек-LGBM на CPU: форма, значения 0..3, детерминизм."""
+    import torch
+
+    lgb = pytest.importorskip("lightgbm")
+    from firemon.models.bs.predictor import BSPredictor
+    from firemon.models.bs.stack import stack_feature_names
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    rng = np.random.RandomState(0)
+    n_feat = len(stack_feature_names())
+    X, y = rng.normal(size=(400, n_feat)).astype(np.float32), rng.randint(0, 4, 400)
+    booster = lgb.train(dict(objective="multiclass", num_class=4, num_leaves=4, verbosity=-1, deterministic=True,
+                             num_threads=1, seed=42), lgb.Dataset(X, y), num_boost_round=3)
+    path = tmp_path / "bs_stack.txt"
+    booster.save_model(str(path))
+    cfg = {"device": "cpu", "unet_weights": [str(tiny_checkpoint)], "use_stack": True, "stack_weights": str(path),
+           "stack_gate": 0.0, "num_threads": 2, "decode": {"t_burn": 0.5, "w": [1.0, 1.0, 1.0]}, "postprocess": {}}
+    pred = BSPredictor(cfg).load()
+    assert pred.stack is not None
+    chip = make_chip(8)
+    a, b = pred.predict(chip), pred.predict(chip)
+    assert a.shape == (512, 512) and a.dtype == np.uint8 and set(np.unique(a)) <= {0, 1, 2, 3}
+    np.testing.assert_array_equal(a, b)
+
+
+def test_predictor_cuda_request_falls_back(tiny_checkpoint, monkeypatch):
+    import torch
+
+    from firemon.models.bs.predictor import BSPredictor
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    pred = BSPredictor({"device": "cuda", "unet_weights": [str(tiny_checkpoint)]}).load()
+    assert pred.device.type == "cpu"
+
+
+def test_predictor_without_weights_uses_rules(tmp_path):
+    from firemon.models.bs.predictor import BSPredictor
+
+    pred = BSPredictor({"unet_weights": [str(tmp_path / "nope.pt")], "use_lgbm": True,
+                        "lgbm_weights": str(tmp_path / "nope.txt")}).load()
+    chip = make_chip(7)
+    np.testing.assert_array_equal(pred.predict(chip), predict_bs_rules(chip))

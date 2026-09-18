@@ -8,5 +8,5 @@ af:
   di45_min: 15.0     # K, I4 − I5
 
 bs:
-  model: rules
-  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная
+  model: unet        # unet — BSPredictor, параметры в configs/bs_inference.yaml; rules — аварийный режим (пороги dNBR)
+  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная (только для model: rules)

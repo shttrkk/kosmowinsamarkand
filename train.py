@@ -19,8 +19,15 @@ def main() -> int:
     ap.add_argument("--module", choices=["af", "bs", "all"], required=True)
     ap.add_argument("--data-dir", default="data/train")
     ap.add_argument("--config", default=None)
+    ap.add_argument("--bs-stages", nargs="*", default=None,
+                    help="этапы BS: rules lgbm unet stack ensemble (по умолчанию все)")
     args = ap.parse_args()
-    print(f"[train] модуль '{args.module}': обучаемая модель ещё не подключена — используются правила-заглушки.")
+    if args.module in ("bs", "all"):
+        from firemon.models.bs.pipeline import run as run_bs
+
+        run_bs(args.data_dir, args.bs_stages)
+    if args.module in ("af", "all"):
+        print("[train] модуль 'af': обучаемая модель ещё не подключена — используются правила-заглушки.")
     return 0
 
 

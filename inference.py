@@ -70,16 +70,23 @@ def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict) -> int:
     t_af = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    bs_preds: dict[str, np.ndarray] = {}
-    thresholds = tuple(bs_cfg.get("dnbr_thresholds", (0.10, 0.27, 0.44)))
-    for cid in chips_of_kind(data_dir, "bs", template_ids):
-        try:
-            chip = read_bs_chip(data_dir, cid, with_mask=False, layers=("s2_pre", "s2_post"))
-            bs_preds[cid] = predict_bs_rules(chip, thresholds)
-        except Exception as e:
-            n_failed += 1
-            log.error("BS %s: %s — пустая маска", cid, e)
-            bs_preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPES["bs"]), np.uint8)
+    bs_ids = chips_of_kind(data_dir, "bs", template_ids)
+    if bs_cfg.get("model", "unet") == "rules":  # аварийный режим без моделей
+        bs_preds: dict[str, np.ndarray] = {}
+        thresholds = tuple(bs_cfg.get("dnbr_thresholds", (0.10, 0.27, 0.44)))
+        for cid in bs_ids:
+            try:
+                chip = read_bs_chip(data_dir, cid, with_mask=False, layers=("s2_pre", "s2_post", "aux"))
+                bs_preds[cid] = predict_bs_rules(chip, thresholds)
+            except Exception as e:
+                n_failed += 1
+                log.error("BS %s: %s — пустая маска", cid, e)
+                bs_preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPES["bs"]), np.uint8)
+    else:  # UNet (+LGBM) — конфиг configs/bs_inference.yaml, секция bs общего конфига его перекрывает
+        from firemon.models.bs.infer import load_bs_config, run_bs_inference
+        bs_preds, bs_failed, bs_timing = run_bs_inference(data_dir, bs_ids, load_bs_config(bs_cfg), shapes)
+        n_failed += bs_failed
+        log.info("BS: загрузка моделей %.2f с, чтение+предсказание %.2f с", bs_timing["load"], bs_timing["predict"])
     t_bs = time.perf_counter() - t0
 
     t0 = time.perf_counter()
