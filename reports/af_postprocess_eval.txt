@@ -1,0 +1,33 @@
+порог 0.52 (без постобработки)             OOF 0.9686  temporal 0.9560
+гистерезис high 0.4 low 0.1                OOF 0.9596  temporal 0.9567
+гистерезис high 0.4 low 0.15               OOF 0.9628  temporal 0.9572
+гистерезис high 0.4 low 0.2                OOF 0.9643  temporal 0.9593
+гистерезис high 0.4 low 0.3                OOF 0.9658  temporal 0.9591
+гистерезис high 0.5 low 0.1                OOF 0.9601  temporal 0.9560
+гистерезис high 0.5 low 0.15               OOF 0.9633  temporal 0.9565
+гистерезис high 0.5 low 0.2                OOF 0.9647  temporal 0.9586
+гистерезис high 0.5 low 0.3                OOF 0.9662  temporal 0.9580
+гистерезис high 0.5 low 0.4                OOF 0.9673  temporal 0.9586
+гистерезис high 0.6 low 0.1                OOF 0.9599  temporal 0.9550
+гистерезис high 0.6 low 0.15               OOF 0.9630  temporal 0.9555
+гистерезис high 0.6 low 0.2                OOF 0.9645  temporal 0.9575
+гистерезис high 0.6 low 0.3                OOF 0.9659  temporal 0.9568
+гистерезис high 0.6 low 0.4                OOF 0.9670  temporal 0.9575
+гистерезис high 0.7 low 0.1                OOF 0.9593  temporal 0.9526
+гистерезис high 0.7 low 0.15               OOF 0.9625  temporal 0.9531
+гистерезис high 0.7 low 0.2                OOF 0.9639  temporal 0.9552
+гистерезис high 0.7 low 0.3                OOF 0.9654  temporal 0.9546
+гистерезис high 0.7 low 0.4                OOF 0.9664  temporal 0.9554
+гистерезис high 0.8 low 0.1                OOF 0.9578  temporal 0.9487
+гистерезис high 0.8 low 0.15               OOF 0.9610  temporal 0.9491
+гистерезис high 0.8 low 0.2                OOF 0.9624  temporal 0.9512
+гистерезис high 0.8 low 0.3                OOF 0.9639  temporal 0.9506
+гистерезис high 0.8 low 0.4                OOF 0.9649  temporal 0.9505
+лучший гистерезис по OOF: (np.float64(0.9686386315039202), None)
+порог 0.52 + удаление одиночных p<0.6      OOF 0.9684  temporal 0.9557
+порог 0.52 + удаление одиночных p<0.7      OOF 0.9682  temporal 0.9546
+порог 0.52 + удаление одиночных p<0.8      OOF 0.9674  temporal 0.9516
+порог 0.52 + удаление одиночных p<0.9      OOF 0.9648  temporal 0.9492
+порог 0.52 + вода днём I3>0.15 -> 0        OOF 0.9683  temporal 0.9565
+порог 0.52 + вода днём I3>0.2 -> 0         OOF 0.9685  temporal 0.9560
+порог 0.52 + вода днём I3>0.3 -> 0         OOF 0.9686  temporal 0.9560

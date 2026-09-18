@@ -1,11 +1,11 @@
-# Конфиг inference.py. Сейчас — заглушки на правилах (задача 01); агенты AF/BS заменят секции af/bs.
+# Конфиг inference.py. AF — LightGBM (задача 03); BS — заглушка на правилах до задачи 04.
 seed: 42
 num_threads: 4
 
 af:
-  model: rules
-  i4_min: 320.0      # K
-  di45_min: 15.0     # K, I4 − I5
+  model: lgbm            # lgbm | rules (контекстное правило шага 0 — также аварийный вариант, если нет весов)
+  weights_dir: weights   # af_lgbm_fold{0..4}.txt + af_lgbm_meta.json (порог подобран по OOF)
+  num_threads: 4         # потоки LightGBM predict (фиксировано для детерминизма)
 
 bs:
   model: rules

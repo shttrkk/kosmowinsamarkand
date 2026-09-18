@@ -151,6 +151,13 @@ fire-monitoring/
 - Реальный тест: `python scripts/check_data.py --split test` (комплектность, chip_id meta == шаблон == файлы, 5+5 случайных чипов против train), `python eda/test_vs_train.py` (сдвиг), `python scripts/check_submission.py <csv>` (валидатор + сводка пикселей/пустых масок). Заглушка на реальном тесте: 10–13 с, код 0.
 - В AF-чипах NaN в I4/I5 встречаются и при `valid=1` и `valid_frac=1.0` (≈55 % чипов, в среднем 8–9 % пикселей, и в train, и в тесте) — `valid_frac` из meta их не отражает; пользоваться ключом `chip["valid"]`.
 
+### Модуль AF (задача 03) — использовать, не дублировать
+- `firemon.models.af.predictor.AFPredictor(cfg).load()` → `predict(chip)` (маска 0/1), `predict_proba(chip)`, `predict_many(chips)`; функция `predict_af(chip)`. Веса: `weights/af_lgbm_fold{0..4}.txt` + `af_lgbm_meta.json` (порог, список признаков). Нет весов → `inference.py` откатывается на `rules.predict_af_context` (контекстное правило, OOF F1 0.8965).
+- Признаки: `firemon.features.af_features` — `compute_af_features(chip)` (F,H,W), `af_feature_rows(chip, mask)` (n,F), `candidate_mask`, `FEATURE_NAMES` (110). Модель обучается и применяется ТОЛЬКО на кандидатах (recall кандидатов на train 100 %).
+- Метрики AF (финал, AF-17): OOF F1 0.9682 (GroupKFold), 0.9597 (temporal 2024). Постобработка (гистерезис и др.) проверена и отклонена. Детали — `reports/af_module.md`.
+- Кэш пиксельного датасета — `data/cache/af_train.npz` (npz, не parquet: в окружении нет `pyarrow`).
+- Кандидаты AF (AF-17): день `I4>314 K & I4−I5>17 K`, ночь `I4>290 K & I4−I5>5 K` — запас ≥ 5 K от минимума огня train. Sanity на реальном тесте — `reports/af_test_sanity.md` (дневные сцены теста теплее train).
+
 ## 9. Формат отчёта о выполненной задаче
 
 В конце каждой задачи агент пишет краткий отчёт (в ответе и в `reports/tasklog/<номер>_<имя>.md`): что сделано, какие файлы, как запустить, какие тесты прошли, метрики (если есть), что не получилось/открытые вопросы, что менять в CLAUDE.md.

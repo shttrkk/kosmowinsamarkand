@@ -16,10 +16,12 @@ T_START = time.perf_counter()
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))  # работает и без `pip install -e .`
 
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
 import numpy as np  # noqa: E402
 
 from firemon.io import list_chips, read_af_chip, read_bs_chip  # noqa: E402
-from firemon.models.af.rules import predict_af_rules  # noqa: E402
+from firemon.models.af.rules import predict_af_context  # noqa: E402
 from firemon.models.bs.rules import predict_bs_rules  # noqa: E402
 from firemon.submission import (DEFAULT_SHAPES, build_submission, read_submission,  # noqa: E402
                                 shapes_from_meta, validate_submission, write_submission)
@@ -49,6 +51,42 @@ def chips_of_kind(data_dir: Path, kind: str, template_ids: list[str] | None) -> 
         return []
 
 
+def predict_af_all(data_dir: Path, chip_ids: list[str], af_cfg: dict, shapes: dict, workers: int) -> tuple[dict, int]:
+    """AF: чтение + признаки кандидатов параллельно по чипам (rasterio/numpy отпускают GIL),
+    затем ОДИН вызов LightGBM на все чипы. Нет весов → контекстное правило (шаг 0), а не падение."""
+    predictor = loading = None
+    pool = ThreadPoolExecutor(max(1, workers))
+    if af_cfg.get("model", "lgbm") == "lgbm":
+        try:
+            from firemon.models.af.predictor import AFPredictor
+            predictor = AFPredictor(af_cfg).load_meta()
+            loading = pool.submit(predictor.load_boosters)   # модели грузятся, пока считаются признаки
+        except Exception as e:
+            predictor = None
+            log.error("AF: не удалось загрузить LightGBM (%s) — используется контекстное правило", e)
+
+    def work(cid: str):
+        try:
+            chip = read_af_chip(data_dir, cid, with_mask=False)
+            return predictor.candidates_and_rows(chip) if predictor else predict_af_context(chip)
+        except Exception as e:  # один битый чип не должен ронять весь submission
+            log.error("AF %s: %s — пустая маска", cid, e)
+            return None
+
+    with pool:
+        parts = list(pool.map(work, chip_ids))
+        if loading is not None:
+            loading.result()
+    failed = [i for i, p in enumerate(parts) if p is None]
+    empty = lambda cid: np.zeros(shapes.get(cid, DEFAULT_SHAPES["af"]), np.uint8)  # noqa: E731
+    if predictor:
+        ok = [i for i, p in enumerate(parts) if p is not None]
+        masks = dict(zip(ok, predictor.masks_from_parts([parts[i] for i in ok])))
+    else:
+        masks = {i: p for i, p in enumerate(parts) if p is not None}
+    return {cid: masks.get(i, empty(cid)) for i, cid in enumerate(chip_ids)}, len(failed)
+
+
 def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict) -> int:
     template_ids = None
     if sample is not None:
@@ -58,15 +96,9 @@ def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict) -> int:
     n_failed = 0
 
     t0 = time.perf_counter()
-    af_preds: dict[str, np.ndarray] = {}
-    for cid in chips_of_kind(data_dir, "af", template_ids):
-        try:
-            chip = read_af_chip(data_dir, cid, with_mask=False, layers=("viirs",))
-            af_preds[cid] = predict_af_rules(chip, af_cfg.get("i4_min", 320.0), af_cfg.get("di45_min", 15.0))
-        except Exception as e:  # один битый чип не должен ронять весь submission
-            n_failed += 1
-            log.error("AF %s: %s — пустая маска", cid, e)
-            af_preds[cid] = np.zeros(shapes.get(cid, DEFAULT_SHAPES["af"]), np.uint8)
+    af_preds, af_failed = predict_af_all(data_dir, chips_of_kind(data_dir, "af", template_ids), af_cfg, shapes,
+                                         int(cfg.get("num_threads", 4)))
+    n_failed += af_failed
     t_af = time.perf_counter() - t0
 
     t0 = time.perf_counter()
@@ -113,7 +145,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    seed_everything(int(cfg.get("seed", 42)), with_torch=False)  # заглушки на правилах torch не используют
+    seed_everything(int(cfg.get("seed", 42)), with_torch=False)  # LightGBM и правила torch не используют
     sample = find_sample_submission(args.data_dir, args.sample_submission)
     code = run(args.data_dir, args.output, sample, cfg)
     log.info("Полное время инференса: %.2f с", time.perf_counter() - T_START)
