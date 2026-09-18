@@ -38,6 +38,7 @@ SCORE_LADDER = [
     ("BS: UNet →\nстек-LGBM", 0.7909),
     ("BS: событие,\n2-й UNet", 0.8248),
     ("BS: пост-\nобработка", 0.8344),
+    ("финал:\nбез TTA", 0.8300),
 ]
 # вклад решений в Score на OOF (ΔScore), final_numbers.md B2
 CONTRIB = [
@@ -49,6 +50,7 @@ CONTRIB = [
     ("AF: LightGBM на кандидатах", 0.025),
     ("BS: постобработка (MMU 25 px, дыры, 300 px от события)", 0.010),
     ("BS: второй UNet (усреднение)", 0.007),
+    ("BS: отказ от TTA (результат не зависит от устройства)", -0.004),
 ]
 
 def _style(ax):
@@ -84,14 +86,14 @@ def af_contrib() -> Path:
 
 
 def score_ladder() -> Path:
-    fig, ax = plt.subplots(figsize=(11.0, 4.4), dpi=170, facecolor=SURFACE)
+    fig, ax = plt.subplots(figsize=(12.0, 4.4), dpi=170, facecolor=SURFACE)
     _style(ax)
     names = [s[0] for s in SCORE_LADDER]
     vals = [s[1] for s in SCORE_LADDER]
     bars = ax.bar(names, vals, width=0.56, color=SERIES, linewidth=0)
     prev = None
     for bar, v in zip(bars, vals):
-        label = f"{v:.4f}" if prev is None else f"{v:.4f}\n+{v - prev:.3f}"
+        label = f"{v:.4f}" if prev is None else f"{v:.4f}\n{v - prev:+.3f}".replace("-", "−")
         ax.text(bar.get_x() + bar.get_width() / 2, v + 0.012, label, ha="center", va="bottom", fontsize=10.5, color=INK)
         prev = v
     ax.set_ylim(0, 1.0)
@@ -99,7 +101,7 @@ def score_ladder() -> Path:
     ax.set_axisbelow(True)
     ax.set_ylabel("Score (OOF, групповая валидация)", color=MUTED, fontsize=10)
     ax.tick_params(axis="x", labelsize=9, colors=INK)
-    ax.set_title("Score по шагам: 0.309 → 0.834", loc="left",
+    ax.set_title("Score по шагам: 0.309 → 0.830 (последний шаг — отказ от TTA ради независимости от устройства)", loc="left",
                  fontsize=12, color=INK, fontweight="bold", pad=12)
     fig.tight_layout()
     out = FIG / "report_score_ladder.png"
@@ -115,13 +117,15 @@ def contrib() -> Path:
     vals = [c[1] for c in CONTRIB][::-1]
     bars = ax.barh(names, vals, height=0.56, color=SERIES, linewidth=0)
     for bar, v in zip(bars, vals):
-        ax.text(v + 0.004, bar.get_y() + bar.get_height() / 2, f"+{v:.3f}", va="center", fontsize=10.5, color=INK)
-    ax.set_xlim(0, 0.27)
+        ax.text(max(v, 0) + 0.004, bar.get_y() + bar.get_height() / 2, f"{v:+.3f}".replace("-", "−"), va="center", fontsize=10.5,
+                color=INK)
+    ax.set_xlim(-0.012, 0.27)
+    ax.axvline(0, color=MUTED, linewidth=0.8)
     ax.xaxis.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.set_xlabel("прирост Score (OOF) от решения", color=MUTED, fontsize=10)
     ax.tick_params(axis="y", labelsize=10.5, colors=INK)
-    fig.suptitle("Вклад каждого решения в Score (OOF): всего +0.526 к baseline 0.309", x=0.012, ha="left", fontsize=12, color=INK,
+    fig.suptitle("Вклад каждого решения в Score (OOF): всего +0.521 к baseline 0.309", x=0.012, ha="left", fontsize=12, color=INK,
                  fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = FIG / "report_contrib.png"
