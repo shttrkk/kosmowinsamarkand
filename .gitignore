@@ -39,3 +39,6 @@ Thumbs.db
 
 # артефакты скриншотов (playwright)
 .playwright-mcp/
+
+# EDA: кэш признаков пересчитывается скриптами eda/*.py
+eda/cache/
