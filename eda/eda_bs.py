@@ -478,6 +478,164 @@ def b4b_event_zone(meta, F, thr_glob):
     N["b4b_fp_share_outside_circle"] = float(1 - (conf_in[0, 1:].sum() / max(conf_all[0, 1:].sum(), 1)))
 
 
+# ----------------------------------------------------------------------------- B4c окружность события и центр чипа
+def b4c_event_circle(meta, F, thr_lc):
+    """Геометрия буфера события относительно ЧИПА: можно ли использовать расстояние до центра чипа как приор.
+    Центр/радиус — охватывающая окружность эталонной гари (оракул); «лишняя гарь» — dNBR ≥ порога слабой степени
+    своего покрова дальше R от центра окружности."""
+    print("B4c. окружность события относительно центра чипа")
+    m, dn, lc = F["mask"], F["dnbr"], F["lc"]
+    n = len(m)
+    yy, xx = np.mgrid[:512, :512]
+    c0 = 255.5
+    d_chip = np.hypot(xx - c0, yy - c0)                      # расстояние до центра чипа, px
+    t1_lut = np.full(256, thr_lc[len(LC_MAIN)][0], np.float32)
+    for j, code in enumerate(LC_MAIN):
+        t1_lut[code] = thr_lc[j][0]
+    excl = (0, 3, 9, 11)
+    rho_grid = np.arange(60, 365, 10)                        # радиус приора от центра чипа, px (до угла 362)
+    tp_r, fp_r = np.zeros(len(rho_grid)), np.zeros(len(rho_grid))
+    tp_rc, fp_rc = np.zeros(len(rho_grid)), np.zeros(len(rho_grid))   # то же + маска SCL
+    ring_edges = np.arange(0, 370, 10)
+    ring_burn, ring_all, ring_hi = np.zeros(len(ring_edges) - 1), np.zeros(len(ring_edges) - 1), np.zeros(len(ring_edges) - 1)
+    rows, geo = [], []
+    burn_total = 0
+    for i in range(n):
+        b = m[i] > 0
+        burn_total += int(b.sum())
+        pts = np.argwhere(b)[:, ::-1].astype(np.float64)
+        edge_pts = pts[ndi.binary_erosion(b)[b] == 0] if len(pts) > 2000 else pts
+        (cx, cy), r = enclosing_circle(edge_pts)
+        gx, gy = pts[:, 0].mean(), pts[:, 1].mean()
+        hi = dn[i].astype(np.float32) >= t1_lut[lc[i]]
+        nc = ~(np.isin(F["scl_post"][i], excl) | np.isin(F["scl_pre"][i], excl))
+        d_ev = np.hypot(xx - cx, yy - cy)
+        extra = hi & (d_ev > r + 0.5)
+        extra_nc = extra & nc
+        touch = {"top": bool(b[0].any()), "bottom": bool(b[-1].any()), "left": bool(b[:, 0].any()), "right": bool(b[:, -1].any())}
+        far = float(d_chip[b].max())                          # самый дальний от центра чипа пиксель гари
+        rows.append({"chip_id": meta["chip_id"].iloc[i], "burn_px": int(b.sum()),
+                     "circle_dx_px": cx - c0, "circle_dy_px": cy - c0, "circle_offset_px": float(np.hypot(cx - c0, cy - c0)),
+                     "centroid_dx_px": gx - c0, "centroid_dy_px": gy - c0, "centroid_offset_px": float(np.hypot(gx - c0, gy - c0)),
+                     "radius_px": r, "radius_km": r * 0.02, "burn_max_dist_from_chip_center_px": far,
+                     "chip_center_inside_circle": bool(np.hypot(cx - c0, cy - c0) <= r), "chip_center_is_burn": bool(b[255:257, 255:257].any()),
+                     "circle_fits_in_chip": bool(cx - r >= 0 and cy - r >= 0 and cx + r <= 511 and cy + r <= 511),
+                     "touches_edge": any(touch.values()), "edges_touched": int(sum(touch.values())), "edge_burn_px": int(b[0].sum() + b[-1].sum() + b[1:-1, 0].sum() + b[1:-1, -1].sum()),
+                     "hi_dnbr_px": int(hi.sum()), "extra_px": int(extra.sum()), "extra_px_noSCL": int(extra_nc.sum()),
+                     "extra_vs_burn": float(extra.sum() / max(b.sum(), 1))})
+        geo.append((cx, cy, r, gx, gy))
+        dflat, bflat, hflat, ncflat = d_chip.ravel(), b.ravel(), hi.ravel(), nc.ravel()
+        k = np.searchsorted(rho_grid, dflat, side="left")      # пиксель входит в приор с индексом ≥ k
+        for acc_tp, acc_fp, sel in ((tp_r, fp_r, hflat), (tp_rc, fp_rc, hflat & ncflat)):
+            acc_tp += np.cumsum(np.bincount(k[sel & bflat], minlength=len(rho_grid) + 1))[:-1]
+            acc_fp += np.cumsum(np.bincount(k[sel & ~bflat], minlength=len(rho_grid) + 1))[:-1]
+        ring = np.clip(np.digitize(dflat, ring_edges) - 1, 0, len(ring_edges) - 2)
+        ring_all += np.bincount(ring, minlength=len(ring_all)); ring_burn += np.bincount(ring[bflat], minlength=len(ring_all))
+        ring_hi += np.bincount(ring[hflat & ~bflat], minlength=len(ring_all))
+    df = C.save_table(pd.DataFrame(rows), "bs_b4c_event_circle_per_chip.csv")
+
+    qs = (0.05, 0.25, 0.5, 0.75, 0.95)
+    srows = []
+    for col, nm in (("circle_dx_px", "центр окружности: смещение по x, px (+ вправо)"), ("circle_dy_px", "центр окружности: смещение по y, px (+ вниз)"),
+                    ("circle_offset_px", "центр окружности: модуль смещения, px"), ("centroid_dx_px", "центроид гари: смещение по x, px"),
+                    ("centroid_dy_px", "центроид гари: смещение по y, px"), ("centroid_offset_px", "центроид гари: модуль смещения, px"),
+                    ("radius_px", "радиус окружности, px"), ("radius_km", "радиус окружности, км"),
+                    ("burn_max_dist_from_chip_center_px", "самый дальний пиксель гари от центра чипа, px")):
+        x = df[col]
+        srows.append({"величина": nm, "min": x.min(), **{f"q{int(q * 100):02d}": x.quantile(q) for q in qs}, "max": x.max(), "среднее": x.mean(),
+                      "max |·|": x.abs().max()})
+    ts = C.save_table(pd.DataFrame(srows), "bs_b4c_event_circle_summary.csv")
+
+    iou_r = tp_r / (burn_total + fp_r); iou_rc = tp_rc / (burn_total + fp_rc)
+    tr = pd.DataFrame({"радиус приора от центра чипа, px": rho_grid, "км": rho_grid * 0.02, "доля площади чипа": [float((d_chip <= q).mean()) for q in rho_grid],
+                       "доля эталонной гари внутри": [float(ring_burn[: np.searchsorted(ring_edges, q)].sum() / burn_total) for q in rho_grid],
+                       "IoU_burn: порог dNBR по покрову внутри приора": iou_r, "то же + маска SCL 0/3/9/11": iou_rc})
+    C.save_table(tr, "bs_b4c_center_prior_radius.csv")
+    prof = pd.DataFrame({"расстояние до центра чипа, px (левая граница кольца)": ring_edges[:-1], "доля гари в эталоне": ring_burn / np.maximum(ring_all, 1),
+                         "доля ложного высокого dNBR": ring_hi / np.maximum(ring_all, 1)})
+    C.save_table(prof, "bs_b4c_burn_profile_by_distance.csv")
+
+    kb = int(np.argmax(iou_rc))
+    N["b4c_circle_offset_px_q50_q95_max"] = [float(df.circle_offset_px.quantile(.5)), float(df.circle_offset_px.quantile(.95)), float(df.circle_offset_px.max())]
+    N["b4c_circle_dx_px_q05_q50_q95"] = [float(df.circle_dx_px.quantile(q)) for q in (.05, .5, .95)]
+    N["b4c_circle_dy_px_q05_q50_q95"] = [float(df.circle_dy_px.quantile(q)) for q in (.05, .5, .95)]
+    N["b4c_centroid_offset_px_q50_q95_max"] = [float(df.centroid_offset_px.quantile(.5)), float(df.centroid_offset_px.quantile(.95)), float(df.centroid_offset_px.max())]
+    N["b4c_radius_px_q05_q50_q95_max"] = [float(df.radius_px.quantile(q)) for q in (.05, .5, .95)] + [float(df.radius_px.max())]
+    N["b4c_chips_touch_edge"] = int(df.touches_edge.sum()); N["b4c_chips_touch_edge_share"] = float(df.touches_edge.mean())
+    N["b4c_chips_touch_2plus_edges"] = int((df.edges_touched >= 2).sum())
+    N["b4c_chip_center_inside_circle_share"] = float(df.chip_center_inside_circle.mean()); N["b4c_chip_center_is_burn_share"] = float(df.chip_center_is_burn.mean())
+    N["b4c_circle_fits_in_chip_share"] = float(df.circle_fits_in_chip.mean())
+    N["b4c_chips_with_extra"] = int((df.extra_px > 0).sum()); N["b4c_chips_with_extra_ge_burn"] = int((df.extra_px >= df.burn_px).sum())
+    N["b4c_extra_px_total"] = int(df.extra_px.sum()); N["b4c_extra_px_total_noSCL"] = int(df.extra_px_noSCL.sum()); N["b4c_burn_px_total"] = burn_total
+    N["b4c_extra_to_burn_ratio"] = float(df.extra_px.sum() / burn_total); N["b4c_extra_to_burn_ratio_noSCL"] = float(df.extra_px_noSCL.sum() / burn_total)
+    N["b4c_extra_vs_burn_per_chip_q50_q95"] = [float(df.extra_vs_burn.quantile(.5)), float(df.extra_vs_burn.quantile(.95))]
+    N["b4c_best_center_prior_px"] = int(rho_grid[kb]); N["b4c_best_center_prior_iou"] = float(iou_rc[kb]); N["b4c_no_prior_iou"] = float(iou_rc[-1])
+    N["b4c_iou_at_prior_px"] = {int(q): float(v) for q, v in zip(rho_grid, iou_rc) if q in (150, 200, 250, 300, 360)}
+    N["b4c_burn_share_within_px"] = {int(q): float(v) for q, v in zip(rho_grid, tr["доля эталонной гари внутри"]) if q in (150, 200, 250, 300)}
+    N["b4c_burn_prob_center_vs_corner"] = [float(prof.iloc[:5, 1].mean()), float(prof.iloc[30:, 1].mean())]
+    far_all = df.burn_max_dist_from_chip_center_px
+    N["b4c_burn_max_dist_px_q50_q95_max"] = [float(far_all.quantile(.5)), float(far_all.quantile(.95)), float(far_all.max())]
+
+    # --- картинка 1: статистика
+    fig, ax = plt.subplots(1, 4, figsize=(22, 5.2))
+    ax[0].scatter(df.circle_dx_px, df.circle_dy_px, s=22, color=C.C_BLUE, alpha=0.75, label="центр окружности")
+    ax[0].scatter(df.centroid_dx_px, df.centroid_dy_px, s=14, color=C.C_ORANGE, alpha=0.6, marker="^", label="центроид гари")
+    ax[0].axhline(0, color=C.C_MUTED, lw=1); ax[0].axvline(0, color=C.C_MUTED, lw=1)
+    ax[0].set_xlim(-256, 256); ax[0].set_ylim(256, -256); ax[0].set_aspect("equal")
+    ax[0].set_xlabel("смещение по x от центра чипа, px"); ax[0].set_ylabel("смещение по y, px"); ax[0].set_title("Где событие относительно центра чипа"); ax[0].legend(loc="upper right", fontsize=10, frameon=True)
+    ax[1].hist(df.radius_px, bins=np.arange(0, 370, 20), color=C.C_BLUE, edgecolor=C.C_SURFACE)
+    ax[1].axvline(df.radius_px.median(), color=C.C_INK, ls="--", lw=1.5)
+    ax[1].set_xlabel("радиус окружности, px (1 px = 20 м)"); ax[1].set_ylabel("число чипов"); ax[1].set_title(f"Радиус: медиана {df.radius_px.median():.0f} px = {df.radius_km.median():.1f} км")
+    ax[2].plot(ring_edges[:-1] + 5, prof.iloc[:, 1] * 100, color=C.C_RED, label="гарь в эталоне")
+    ax[2].plot(ring_edges[:-1] + 5, prof.iloc[:, 2] * 100, color=C.C_BLUE, label="высокий dNBR, но фон")
+    ax[2].axvline(256, color=C.C_MUTED, lw=1, ls=":"); ax[2].text(258, ax[2].get_ylim()[1] * 0.9, "край чипа", fontsize=10, color=C.C_MUTED)
+    ax[2].set_xlabel("расстояние до центра чипа, px"); ax[2].set_ylabel("% пикселей кольца"); ax[2].set_title("Профиль по расстоянию до центра чипа"); ax[2].legend(fontsize=10)
+    ax[3].plot(rho_grid, iou_r, color=C.C_BLUE, label="порог dNBR по покрову"); ax[3].plot(rho_grid, iou_rc, color=C.C_ORANGE, label="+ маска SCL 0/3/9/11")
+    ax[3].scatter([rho_grid[kb]], [iou_rc[kb]], s=80, color=C.C_INK, zorder=5)
+    ax[3].annotate(f"{rho_grid[kb]} px: {iou_rc[kb]:.3f}", (rho_grid[kb], iou_rc[kb]), xytext=(-40, -28), textcoords="offset points")
+    ax[3].set_xlabel("радиус приора от центра чипа, px"); ax[3].set_ylabel("IoU_burn (пул пикселей)"); ax[3].set_title("Жёсткий приор «круг от центра чипа»"); ax[3].legend(loc="lower right", fontsize=10)
+    fig.suptitle("BS: буфер события относительно чипа — событие не центрировано, приор по центру чипа почти ничего не даёт", y=1.03)
+    C.savefig(fig, "eda_bs_04c_event_circle_stats.png")
+
+    # --- картинка 2: примеры (явная дуга; максимум «лишней» гари; касание края; сильное смещение)
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Circle
+    sev_cmap = ListedColormap([C.SEV_COLORS[k] for k in range(4)])
+    big = df.burn_px > 5000
+    picks, used = [], set()
+    for ttl, order in (("максимум «лишней» гари", (df.extra_px * big).sort_values(ascending=False).index),
+                       ("гарь касается края", (df.edge_burn_px * big).sort_values(ascending=False).index),
+                       ("максимальное смещение центра", (df.circle_offset_px * big).sort_values(ascending=False).index),
+                       ("событие почти по центру", (df.circle_offset_px + 1e6 * ~big).sort_values().index)):
+        for i in order:
+            if i not in used:
+                picks.append((ttl, int(i))); used.add(i)
+                break
+    fig, ax = plt.subplots(2, len(picks), figsize=(5.2 * len(picks), 10.6))
+    for c_, (ttl, i) in enumerate(picks):
+        cx, cy, r, gx, gy = geo[i]
+        hi = dn[i].astype(np.float32) >= t1_lut[lc[i]]
+        extra = hi & (np.hypot(xx - cx, yy - cy) > r + 0.5)
+        ax[0, c_].imshow(m[i], cmap=sev_cmap, vmin=-0.5, vmax=3.5, interpolation="nearest")
+        ax[0, c_].set_title(f"{meta['chip_id'].iloc[i]}\n{ttl}", fontsize=13)
+        show = np.zeros((512, 512, 4), np.float32)
+        show[hi & ~extra] = (0.64, 0.13, 0.12, 1.0); show[extra] = (0.16, 0.47, 0.84, 1.0)
+        ax[1, c_].imshow(np.full((512, 512, 3), 0.93)); ax[1, c_].imshow(show, interpolation="nearest")
+        ax[1, c_].set_title(f"dNBR ≥ t1(покров): внутри R {int((hi & ~extra).sum()):,} px,\nснаружи {int(extra.sum()):,} px (эталон {int((m[i] > 0).sum()):,})".replace(",", " "), fontsize=12)
+        for a_ in ax[:, c_]:
+            a_.add_patch(Circle((cx, cy), r, fill=False, ec=C.C_INK, lw=1.8, ls="--"))
+            a_.plot([c0], [c0], marker="+", ms=16, mew=2.5, color="#1baf7a"); a_.plot([cx], [cy], marker="x", ms=11, mew=2.5, color=C.C_INK)
+            a_.set_xlim(0, 511); a_.set_ylim(511, 0); a_.set_xticks([]); a_.set_yticks([]); a_.grid(False)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=C.SEV_COLORS[k]) for k in (1, 2, 3)] + [plt.Rectangle((0, 0), 1, 1, color=(0.64, 0.13, 0.12)), plt.Rectangle((0, 0), 1, 1, color=(0.16, 0.47, 0.84)),
+               plt.Line2D([], [], color=C.C_INK, ls="--"), plt.Line2D([], [], color="#1baf7a", marker="+", ls="", ms=12, mew=2.5), plt.Line2D([], [], color=C.C_INK, marker="x", ls="", ms=9, mew=2.5)]
+    fig.legend(handles, ["1 слабая", "2 средняя", "3 сильная", "высокий dNBR внутри окружности", "«лишний» высокий dNBR снаружи", "окружность события (оракул)", "центр чипа", "центр окружности"],
+               loc="lower center", ncol=4, fontsize=11)
+    fig.suptitle("BS: эталон (верх) и пиксели с dNBR выше порога слабой степени своего покрова (низ)", y=0.995)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.98))
+    C.savefig(fig, "eda_bs_04c_event_circle_examples.png", tight=False)
+    return df, ts, tr
+
+
 # ----------------------------------------------------------------------------- B5 облака
 def b5_clouds(meta, F, thr_glob):
     print("B5. облака, тени, SCL")
@@ -754,6 +912,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-cache", action="store_true", help="пересчитать eda/cache/bs_*.npz")
     ap.add_argument("--no-gbm", action="store_true", help="пропустить LightGBM в п.9 (быстрее)")
+    ap.add_argument("--only-b4c", action="store_true", help="пересчитать только п. B4c (окружность события), ~1 мин")
     args = ap.parse_args()
     np.random.seed(C.SEED)
     C.setup_style(); C.ensure_dirs()
@@ -762,9 +921,21 @@ def main():
     H = chip_lc_hist(F)
     b1_classes(meta, F, PC)
     b2_indices(S)
-    thr_glob, _ = b3_thresholds(meta, F, H)
+    thr_glob, thr_lc = b3_thresholds(meta, F, H)
+    if args.only_b4c:                                         # быстрый пересчёт одного пункта: числа дописываются в существующий json
+        import json
+        keep = set(N)
+        b4c_event_circle(meta, F, thr_lc)
+        path = C.TABLE_DIR / "bs_numbers.json"
+        old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        new = {k: v for k, v in N.items() if k not in keep}
+        N.clear(); N.update(old); N.update(new)
+        C.save_numbers(N, "bs_numbers.json")
+        print(f"готово за {time.time() - t0:.0f} с")
+        return
     b4_false_positives(meta, S, F)
     b4b_event_zone(meta, F, thr_glob)
+    b4c_event_circle(meta, F, thr_lc)
     b5_clouds(meta, F, thr_glob)
     b6_sar(S, PC)
     b7_relief(S, PC)
