@@ -313,4 +313,4 @@ data/, baseline/, out/, submissions/*.csv     не в git
 
 ## 14. Команда
 
-Марк (git: MarkHub75). <!-- TEAM: впишите остальных участников и роли -->
+{{TEAM}}
