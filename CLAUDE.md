@@ -158,6 +158,9 @@ fire-monitoring/
 - Кэш пиксельного датасета — `data/cache/af_train.npz` (npz, не parquet: в окружении нет `pyarrow`).
 - Кандидаты AF (AF-17): день `I4>314 K & I4−I5>17 K`, ночь `I4>290 K & I4−I5>5 K` — запас ≥ 5 K от минимума огня train. Sanity на реальном тесте — `reports/af_test_sanity.md` (дневные сцены теста теплее train).
 
+### Сервис (задача 06) — использовать, не дублировать
+- `service/` (FastAPI + Leaflet), запуск `python -m uvicorn service.app:app --port 8000`; данные — `python scripts/build_service_data.py --source both` (перезапустить после появления финальных `AFPredictor`/`BSPredictor`: адаптер `service/predictors.py` ждёт `Predictor(config).load()/.predict(chip)` и опционально `.predict_proba(chip)`). В git — только снимок gt `service/data/*.geojson.gz`; `firemon.gpkg` не коммитить. Описание — `reports/service.md`.
+
 ## 9. Формат отчёта о выполненной задаче
 
 В конце каждой задачи агент пишет краткий отчёт (в ответе и в `reports/tasklog/<номер>_<имя>.md`): что сделано, какие файлы, как запустить, какие тесты прошли, метрики (если есть), что не получилось/открытые вопросы, что менять в CLAUDE.md.
