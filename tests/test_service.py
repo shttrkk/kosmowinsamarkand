@@ -302,3 +302,25 @@ def test_service_starts_without_data(tmp_path):
     c = TestClient(create_app(tmp_path))
     assert c.get("/api/v1/health").json()["status"] == "no_data"
     assert c.post("/api/v1/query", json={"bbox": WORLD}).json()["summary"]["area_total_ha"] == 0
+
+
+def test_bs_adapter_reports_rules_when_weights_missing(monkeypatch):
+    """Манифест не должен называть «BSPredictor» предиктор, ушедший в аварийный режим на правилах (нет весов)."""
+    from service import predictors
+
+    monkeypatch.setattr(predictors, "_config", lambda section: {"unet_weights": ["weights/__no_such__.pt"],
+                                                                "use_lgbm": False})
+    fn, name = predictors.get_bs_predictor()
+    assert name == "rules-stub"
+    chip = {"s2_pre": np.full((10, 8, 8), 3000, np.uint16), "s2_post": np.full((10, 8, 8), 3000, np.uint16),
+            "valid": np.ones((8, 8), bool)}
+    assert fn(chip).shape == (8, 8)
+
+
+def test_bs_adapter_uses_bs_inference_config():
+    """Адаптер сервиса берёт пути к весам из configs/bs_inference.yaml (как inference.py), а не только из inference.yaml."""
+    from firemon.models.bs.infer import load_bs_config
+    from service import predictors
+
+    cfg = load_bs_config(predictors._config("bs"))
+    assert cfg.get("unet_weights") and cfg.get("stack_weights") and cfg.get("decode_file")
