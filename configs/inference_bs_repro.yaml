@@ -1,0 +1,23 @@
+# Проверка воспроизводимости обучения BS: тот же inference.py, но веса BS из weights_repro/
+# (python train.py --module bs --weights-dir weights_repro/). AF — как в основном конфиге.
+#   python inference.py --data-dir data/test --output out/submission_repro.csv --config configs/inference_bs_repro.yaml
+#   python scripts/compare_submissions.py out/submission.csv out/submission_repro.csv
+seed: 42
+workers: 8
+
+af:
+  model: lgbm
+  fallback: rules
+  weights_dir: weights
+  num_threads: 8
+
+bs:
+  model: unet
+  fallback: rules
+  unet_weights:
+    - weights_repro/bs_unet_r34_cedice.pt
+    - weights_repro/bs_unet_r34_v4.pt
+  stack_weights: weights_repro/bs_stack.txt
+  lgbm_weights: weights_repro/bs_lgbm.txt
+  lc_medians: weights_repro/bs_lc_medians.json
+  decode_file: weights_repro/bs_decode.json

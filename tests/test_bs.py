@@ -127,6 +127,46 @@ def test_event_postprocess():
     assert circ[20, 20] == 2 and circ[115, 115] == 0
 
 
+def test_deterministic_ce_matches_torch():
+    """Детерминированная CE (one-hot) численно равна F.cross_entropy с весами и ignore_index=255."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("segmentation_models_pytorch")
+    import torch.nn.functional as F
+
+    from firemon.models.bs.unet import ce_loss
+
+    torch.manual_seed(0)
+    lo, t = torch.randn(2, 4, 16, 16), torch.randint(0, 4, (2, 16, 16))
+    t[0, 0, :3] = 255
+    w = torch.tensor([0.5, 1.0, 1.0, 1.2])
+    assert abs(float(ce_loss(lo, t, w)) - float(F.cross_entropy(lo, t, weight=w, ignore_index=255))) < 1e-5
+
+
+def test_nonempty_prior():
+    """Приор «событие есть в каждом чипе»: срабатывает только при < 25 px гари и только если есть компонента ≥ 25 px."""
+    chip = make_chip(9, size=64)
+    chip["s2_pre"][9] = 5
+    chip["s2_post"][9] = 5
+    probs = np.zeros((4, 64, 64), np.float32)
+    probs[0] = 0.95
+    probs[0, 10:20, 10:20], probs[2, 10:20, 10:20] = 0.7, 0.3   # p_burn 0.3: ниже t_burn=0.42, выше t_burn/2
+    probs[0, 40:43, 40:43], probs[1, 40:43, 40:43] = 0.7, 0.3   # 9 px — меньше MMU
+    dec = {"t_burn": 0.42, "w": [1.0, 1.0, 1.0]}
+    empty = decode_probs(probs, dec["t_burn"], dec["w"])
+    assert not empty.any()
+    out = postprocess_bs(empty, chip, {"nonempty_min_px": 25}, probs=probs, decode=dec)
+    assert (out[10:20, 10:20] == 2).all() and out.sum() == 2 * 100          # крупнейшая компонента, степень по argmax
+    np.testing.assert_array_equal(postprocess_bs(empty, chip, {}, probs=probs, decode=dec), empty)  # выключен → как было
+    full = empty.copy()
+    full[30:36, 30:36] = 1                                                   # уже есть 36 px гари → приор молчит
+    np.testing.assert_array_equal(postprocess_bs(full, chip, {"nonempty_min_px": 25}, probs=probs, decode=dec), full)
+    small = probs.copy()
+    small[0, 10:20, 10:20], small[2, 10:20, 10:20] = 0.95, 0.0               # остаётся только компонента 9 px
+    assert not postprocess_bs(empty, chip, {"nonempty_min_px": 25}, probs=small, decode=dec).any()
+    chip["s2_post"][9, 10:20, 10:20] = 9                                     # под запретной маской SCL — не берём
+    assert not postprocess_bs(empty, chip, {"nonempty_min_px": 25, "scl_post_zero": True}, probs=probs, decode=dec).any()
+
+
 def test_event_features_localize_largest_strong_component():
     from firemon.features.bs_features import event_features
 

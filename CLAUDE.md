@@ -192,7 +192,12 @@ fire-monitoring/
   post {0,3,9,11} гари нет; MMU = 25 px; облака/тени НЕ обнулять (−0.07…−0.09 BS-части).
 - Постобработка BS живёт в `src/firemon/models/bs/postprocess.py` (общий `src/firemon/postprocess.py` не тронут).
 - BSPredictor подключён как бэкенд `"unet"` в `BS_BACKENDS` (`src/firemon/pipeline.py`), `bs.model: unet`, `fallback: rules`.
-  Полный `inference.py` на реальном тесте (269 чипов): GPU 20.3–20.8 с (BS 15.3 с), `--device cpu` 52.7 с (BS 47.3 с, без TTA).
+  Полный `inference.py` на реальном тесте (269 чипов): GPU 21.1–21.5 с (BS ≈ 16 с), `--device cpu` 52.4 с (BS 47 с).
+- BS по умолчанию БЕЗ TTA и с UNet в fp32 на GPU (`tta: false`, `gpu_half: false`): прирост TTA < 0.005 BS-части, а так GPU- и
+  CPU-файлы отличаются 1 пикселем из 23.3 млн. Финальный OOF BS-части 0.4912 / 0.5008 (с TTA было 0.4955 / 0.5033; TTA-вариант —
+  `weights/bs_stack_tta.txt` + `bs_decode_tta.json`). Приор «в каждом BS-чипе есть гарь» — `nonempty_min_px: 25` в постобработке.
+- Обучение UNet: взвешенный `F.cross_entropy` на CUDA недетерминирован (OOF двух прогонов расходился до 0.02) → в `unet.py`
+  one-hot CE (`ce_loss`), веса двух прогонов побитно равны. `train.py --module bs --weights-dir X/` пишет веса/кэш/итоги отдельно.
 - В окружении нет `pyarrow`, `onnxruntime`, `psutil` — кэши BS лежат в `data/cache/*.npy` (не parquet).
 - В PowerShell-инструменте here-string с двойными кавычками внутри `python -c` ломается — патчи/скрипты писать в файл.
 

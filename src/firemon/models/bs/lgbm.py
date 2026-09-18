@@ -20,10 +20,10 @@ import numpy as np
 
 from ...features.bs_features import FEATURE_GROUPS, LC_CODES, compute_bs_features, feature_names
 from ...utils import REPO_ROOT, get_logger, seed_everything
-from .common import decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
+from .common import cache_dir, weights_dir, decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
 
 log = get_logger("bs.lgbm")
-CACHE = REPO_ROOT / "data" / "cache"
+CACHE = cache_dir()
 BASE_GROUPS = [g for g in FEATURE_GROUPS if g not in ("lcrel", "rule", "geom", "event")]  # dNBR_rel добавляется по таблице фолда
 FRAC = {"burn": 0.25, "near": 0.30, "cand": 0.10, "rest": 0.02}
 MINIMAL = ["dNBR", "RdNBR", "landcover"]
@@ -259,7 +259,7 @@ def main(argv: list[str] | None = None):
         freq = np.bincount(y, weights=w, minlength=4)
         sample = (X0, y, (w * (freq.sum() / (4 * freq))[y]).astype(np.float32), c)
     if args.stage == "full":
-        train_full(sample, args.rounds, params, REPO_ROOT / "weights")
+        train_full(sample, args.rounds, params, weights_dir())
         return None
     chips = load_chips(args.data_dir)
     if args.stage == "cv":

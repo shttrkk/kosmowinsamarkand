@@ -1,6 +1,6 @@
 {
  "decode": {
-  "t_burn": 0.41999999999999993,
+  "t_burn": 0.4599999999999999,
   "w": [
    0.7,
    1.0,
@@ -13,7 +13,8 @@
   "water_lc_zero": true,
   "event_zero_r": 300,
   "min_component_px": 25,
-  "fill_holes_px": 32
+  "fill_holes_px": 32,
+  "nonempty_min_px": 25
  },
  "ens_weights": {
   "unet": 1.0,

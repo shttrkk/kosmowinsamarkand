@@ -22,11 +22,11 @@ import torch.nn.functional as F
 from ...features.bs_features import (CHANNEL_SETS, UNET_CHANNELS, compute_bs_features, feature_names, groups_for,
                                      select_channels)
 from ...utils import REPO_ROOT, get_logger, seed_everything
-from .common import evaluate_masks, fmt, get_splits, load_chips
+from .common import cache_dir, weights_dir, evaluate_masks, fmt, get_splits, load_chips
 
 log = get_logger("bs.unet")
 _BINARY_PREFIX = ("scl_", "lc_", "invalid", "sar_nodata")
-CACHE = REPO_ROOT / "data" / "cache" / "bs_oof"
+CACHE = cache_dir() / "bs_oof"
 
 
 def unet_inputs(chip: dict, channels: list[str] | None = None) -> np.ndarray:
@@ -54,16 +54,32 @@ def dice_loss(logits: torch.Tensor, target: torch.Tensor, classes=(1, 2, 3), eps
     return loss / len(classes)
 
 
+def _weighted_onehot(target: torch.Tensor, weight: torch.Tensor, dtype) -> torch.Tensor:
+    """(B,4,H,W): вес класса на месте эталонного класса, 0 для ignore (255)."""
+    oh = F.one_hot(target.clamp(max=3), 4).permute(0, 3, 1, 2).to(dtype) * (target != 255).unsqueeze(1)
+    return oh * weight.view(1, -1, 1, 1)
+
+
+def ce_loss(logits: torch.Tensor, target: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """Взвешенная CE через one-hot — то же значение, что F.cross_entropy(weight=…), но ДЕТЕРМИНИРОВАННЫЙ backward:
+    у штатного nll_loss2d на CUDA обратный проход недетерминирован, из-за него два обучения с одним seed расходились
+    (BS-часть OOF ±0.01). С этой реализацией веса двух прогонов побитно равны (reports/bs_module.md, «Воспроизводимость»)."""
+    logp = F.log_softmax(logits.float(), 1)
+    wmap = _weighted_onehot(target, weight, logp.dtype)
+    return -(wmap * logp).sum() / wmap.sum().clamp_min(1e-6)
+
+
 def focal_loss(logits: torch.Tensor, target: torch.Tensor, weight: torch.Tensor, gamma: float = 2.0) -> torch.Tensor:
     logp = F.log_softmax(logits.float(), 1)
-    ce = F.nll_loss(logp, target, weight=weight, reduction="none", ignore_index=255)
-    pt = logp.gather(1, target.clamp(max=3).unsqueeze(1)).squeeze(1).exp()
+    wmap = _weighted_onehot(target, weight, logp.dtype)
+    ce = -(wmap * logp).sum(1)
+    pt = (F.one_hot(target.clamp(max=3), 4).permute(0, 3, 1, 2).to(logp.dtype) * logp).sum(1).exp()
     return ((1 - pt) ** gamma * ce).mean()
 
 
 def make_loss(name: str, class_weights: torch.Tensor):
     def ce_dice(lo, t):
-        return F.cross_entropy(lo.float(), t, weight=class_weights, ignore_index=255) + dice_loss(lo, t)
+        return ce_loss(lo, t, class_weights) + dice_loss(lo, t)
 
     def focal_dice(lo, t):
         return focal_loss(lo, t, class_weights) + dice_loss(lo, t)
@@ -247,7 +263,8 @@ def main(argv: list[str] | None = None) -> dict:
     args = ap.parse_args(argv)
 
     CACHE.mkdir(parents=True, exist_ok=True)
-    weights = REPO_ROOT / "weights"
+    weights = weights_dir()
+    weights.mkdir(parents=True, exist_ok=True)
     ids, x, y, norm = prepare_tensors(args.data_dir, weights / f"bs_norm_{args.tag}.json" if args.split == "full" else None,
                                       CHANNEL_SETS[args.channels])
     result: dict = {"tag": args.tag, "split": args.split, "args": vars(args)}

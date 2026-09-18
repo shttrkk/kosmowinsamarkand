@@ -28,8 +28,10 @@ DEFAULTS: dict = {
     "use_unet": True,
     "use_stack": True,           # LGBM 2-го уровня поверх вероятностей UNet (основной режим)
     "use_lgbm": False,           # пиксельный LGBM 1-го уровня в среднем с UNet (вариант «ансамбль»)
-    "tta": True,                 # 4 отражения на GPU
+    "tta": False,                # TTA (4 отражения): прирост < 0.005 BS-части → выключен, чтобы результат не зависел от устройства
     "tta_cpu": False,            # на CPU TTA по умолчанию выключен (время)
+    "gpu_half": False,           # fp32 без TF32 на GPU: маски побайтно совпадают с CPU (fp16 давал ~25 отличающихся px/чип)
+    "prob_decimals": None,       # округление вероятностей UNet до N знаков перед стеком (сглаживает различия устройств)
     "batch_size": 8,
     "num_threads": 8,            # потоки чтения/признаков/постобработки и torch на CPU
     "lgbm_threads": 16,          # потоки LightGBM (один вызов predict на батч)
@@ -119,12 +121,16 @@ class BSPredictor:
 
         want = self.cfg["device"]
         use_cuda = want in ("auto", "cuda") and torch.cuda.is_available()
+        half = use_cuda and bool(self.cfg.get("gpu_half", False))
+        if use_cuda and not half:
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
         if want == "cuda" and not use_cuda:
             log.warning("device=cuda, но CUDA недоступна — CPU")
         self.device = torch.device("cuda" if use_cuda else "cpu")
         if not use_cuda:
             torch.set_num_threads(int(self.cfg["num_threads"]))
-        dt = torch.float16 if use_cuda else torch.float32
+        dt = torch.float16 if half else torch.float32
         self.channels = []
         for p in paths:  # чекпойнты ансамбля могут быть обучены на разных наборах каналов
             ck = torch.load(p, map_location="cpu", weights_only=False)
@@ -132,7 +138,7 @@ class BSPredictor:
             model = build_unet(ck["encoder"], len(ck["channels"]), pretrained=False, arch=ck.get("arch", "unet"))
             model.load_state_dict(ck["state_dict"])
             model = model.to(self.device).eval()
-            model = model.half() if use_cuda else model.float()
+            model = model.half() if half else model.float()
             mean = torch.tensor(ck["norm"]["mean"], dtype=dt, device=self.device).view(1, -1, 1, 1)
             std = torch.tensor(ck["norm"]["std"], dtype=dt, device=self.device).view(1, -1, 1, 1)
             self.models.append({"model": model, "loss": ck.get("loss", "ce_dice"), "channels": list(ck["channels"]),
@@ -157,7 +163,11 @@ class BSPredictor:
                 xm = xb if idx == list(range(xb.shape[1])) else xb[:, idx]
                 xm = (xm.to(m["mean"].dtype) - m["mean"]) / m["std"]
                 out = out + predict_probs(m["model"], xm, m["loss"], tta)
-            return (out / len(self.models)).float().cpu().numpy()
+            out = (out / len(self.models)).float().cpu().numpy()
+        nd = self.cfg.get("prob_decimals")
+        if nd is not None:
+            out = np.round(out, int(nd))
+        return out
 
     def _lgbm_blend(self, feats: np.ndarray, p_unet: np.ndarray | None) -> np.ndarray:
         """Среднее UNet и пиксельного LGBM. Без стека LGBM считается только там, где ансамбль в принципе
@@ -267,7 +277,7 @@ class BSPredictor:
     def _finish(self, chip: dict, p: np.ndarray) -> np.ndarray:
         dec = self.cfg["decode"]
         mask = decode_probs(p, dec.get("t_burn"), tuple(dec.get("w", (1, 1, 1))))
-        return postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p)
+        return postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p, decode=dec)
 
     def predict_batch(self, chips: list[dict], feats: list[np.ndarray] | None = None,
                       ex: ThreadPoolExecutor | None = None) -> list[np.ndarray]:

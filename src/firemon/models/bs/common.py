@@ -13,6 +13,23 @@ from ...splits import load_folds
 from ...utils import REPO_ROOT
 
 N_CLASSES = 4
+
+
+def weights_dir() -> Path:
+    """Куда обучение пишет веса. По умолчанию weights/; `train.py --weights-dir` задаёт FIREMON_BS_WEIGHTS_DIR."""
+    import os
+
+    p = Path(os.environ.get("FIREMON_BS_WEIGHTS_DIR") or REPO_ROOT / "weights")
+    return p if p.is_absolute() else REPO_ROOT / p
+
+
+def cache_dir() -> Path:
+    """Кэш обучения (выборки пикселей, OOF-вероятности). Для нестандартного каталога весов — свой кэш
+    data/cache/bs_<имя каталога весов>/, чтобы повторный прогон не затирал OOF основной модели."""
+    import os
+
+    p = Path(os.environ.get("FIREMON_BS_CACHE_DIR") or REPO_ROOT / "data" / "cache")
+    return p if p.is_absolute() else REPO_ROOT / p
 W_BURN, W_SEV = 0.35, 0.30
 
 
