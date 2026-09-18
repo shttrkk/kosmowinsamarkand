@@ -142,6 +142,27 @@ def test_deterministic_ce_matches_torch():
     assert abs(float(ce_loss(lo, t, w)) - float(F.cross_entropy(lo, t, weight=w, ignore_index=255))) < 1e-5
 
 
+def test_component_features():
+    """Признаки связных компонент: форма, конечность, площадь/ранг, пустая маска."""
+    from firemon.models.bs.components import FEATURE_NAMES as CF, component_features
+
+    chip = make_chip(11, size=128)
+    mask = np.zeros((128, 128), np.uint8)
+    mask[10:40, 10:40] = 2          # 900 px, касается… нет, внутри
+    mask[0:6, 100:110] = 1          # 60 px, касается края
+    probs = np.zeros((4, 128, 128), np.float32)
+    probs[0] = 0.9
+    probs[0][mask > 0], probs[2][mask > 0] = 0.2, 0.8
+    lab, n, X = component_features(mask, probs, chip)
+    assert n == 2 and X.shape == (2, len(CF)) and np.isfinite(X).all()
+    big = int(lab[20, 20]) - 1
+    assert X[big, CF.index("area")] == 900 and X[big, CF.index("rank")] == 1 and X[big, CF.index("area_rel")] == 1.0
+    assert X[1 - big, CF.index("touch_edge")] == 1.0 and X[big, CF.index("touch_edge")] == 0.0
+    assert X[big, CF.index("pb_contrast")] > 0.5
+    _, n0, X0 = component_features(np.zeros_like(mask), probs, chip)
+    assert n0 == 0 and X0.shape == (0, len(CF))
+
+
 def test_nonempty_prior():
     """Приор «событие есть в каждом чипе»: срабатывает только при < 25 px гари и только если есть компонента ≥ 25 px."""
     chip = make_chip(9, size=64)
