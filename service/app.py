@@ -123,6 +123,7 @@ def create_app(data_dir: Path | str | None = None) -> FastAPI:
 
     # ───────────── API ─────────────
 
+    @app.get("/health", include_in_schema=False)  # короткий алиас: проверки доступности, Docker HEALTHCHECK
     @app.get("/api/v1/health", tags=["служебные"])
     def health():
         ok = len(store.hotspots) > 0 or len(store.scars) > 0

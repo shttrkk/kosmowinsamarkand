@@ -139,6 +139,7 @@ def client(service_data):
 def test_health_and_meta_endpoints(client):
     r = client.get("/api/v1/health")
     assert r.status_code == 200 and r.json()["status"] == "ok"
+    assert client.get("/health").json() == r.json()  # короткий алиас
     d = client.get("/api/v1/dates").json()
     assert d["gt"]["hotspots"]["n"] > 0 and d["gt"]["burn_scars"]["date_min"] <= d["gt"]["burn_scars"]["date_max"]
     assert len(client.get("/api/v1/chips").json()["features"]) == 10 + len(BS_SUBSET)
