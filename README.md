@@ -25,13 +25,19 @@
 |---|---|---|---|---|
 | AF | правило-baseline `I4>320 K & I4−I5>15 K` | F1 0.2435 (весь train) | — | строка 0 `reports/experiments.md` |
 | AF | **LightGBM по кандидатам (AF-17)** | **F1 0.9682** | **F1 0.9597** | `reports/af_module.md` |
-| BS | baseline: dNBR 0.10/0.27/0.44 | IoU_burn 0.3706, mIoU_sev 0.3129 (весь train) | — | текущий бэкенд `rules` |
+| BS | правило-baseline: dNBR 0.10/0.27/0.44 | IoU_burn 0.3706, mIoU_sev 0.3129 | IoU_burn 0.3571, mIoU_sev 0.2967 | запасной бэкенд `rules` |
 | BS | **2×UNet-resnet34 → стек-LGBM + постобработка** | **IoU_burn 0.7631, mIoU_sev 0.7614** | **IoU_burn 0.7761, mIoU_sev 0.7720** | `reports/bs_module.md` |
 
-| Отправка на public-лидерборд | Состав | Score |
-|---|---|---|
-| `submission_stub.csv` | оба baseline-правила | 0.3117 (на train 0.3088) |
-| `submission_af.csv` | AF LightGBM + BS baseline | **0.6035** → F1_af на public ≈ 0.93–0.99 |
+**Score по шагам** (`0.35·F1_af + 0.35·IoU_burn + 0.30·mIoU_sev`):
+
+| Шаг (отправка) | OOF (GroupKFold-5) | Временной сплит 2024 | Public LB |
+|---|---|---|---|
+| оба baseline-правила (`submission_stub.csv`) | 0.3088 | — | 0.3117 |
+| + AF LightGBM (`submission_af.csv`) | 0.5625 | 0.5499 | 0.6035 → F1_af на public ≈ 0.93–0.99 |
+| **+ BS 2×UNet → стек-LGBM (`submission_v3_af_bs.csv`)** | **0.8344** | **0.8392** | {{FINAL:SCORE_PUBLIC}} |
+
+Единый источник всех чисел — `reports/final_numbers.md`; полный отчёт — `reports/report.md` (`reports/report.pdf`),
+презентация — `presentation/deck.pptx`, пакет для защиты — `handoff/HANDOFF.md`.
 
 Подробно: `reports/submissions.md`, `reports/experiments.md`, `reports/baseline_review.md`, `reports/eda.md`.
 
@@ -40,7 +46,7 @@
 - ОС: Windows 10/11 или Linux x86_64 (glibc ≥ 2.28: Debian 11+, Ubuntu 20.04+). Разработка велась на Windows 10,
   Linux проверен в Docker (`python:3.12-slim`).
 - Python **3.10–3.12** (`pyproject.toml`: `>=3.10,<3.13`); проверено на **3.12.7**. Версии пакетов зафиксированы.
-- GPU **не требуется**: инференс целиком укладывается в ~10 с на CPU. CUDA 12.4 (драйвер ≥ 550) нужна только для
+- GPU **не обязательна**: на GPU (RTX 4070) полный инференс ≈ 20 с, без GPU ≈ 53 с (`--device cpu`; результат немного отличается — на CPU выключен TTA, см. раздел 6). CUDA 12.4 (драйвер ≥ 550) нужна для обучения UNet.
   обучения нейросетевой BS-модели.
 - RAM: инференс ≤ 2 ГБ, обучение AF ≤ 4 ГБ. Диск: ~6 ГБ на окружение с CUDA-сборкой torch (~1.5 ГБ с CPU-сборкой),
   данные train + test ≈ 3 ГБ.
@@ -130,12 +136,13 @@ python inference.py --data-dir data/test --output out/submission.csv
 
 | Конфигурация (269 чипов теста) | Время |
 |---|---|
-| CPU, venv (i5-13600KF, 8 потоков) — AF LightGBM + BS baseline | **~10–11 с** (9.3–12.4) |
-| CPU, Docker-образ `firemon` (включая запуск контейнера) | 11.1–11.5 с |
-| CPU, один поток (`--workers 1`) | ~19–21 с |
+| для справки: AF LightGBM + BS-правила (`bs.model: rules`), CPU, 8 потоков | ~10–11 с (9.3–12.4) |
+| для справки: то же в Docker-образе `firemon` (замер до подключения BS-модели; с ней образ нужно пересобрать) | 11.1–11.5 с |
+| для справки: то же, один поток (`--workers 1`) | ~19–21 с |
 | **GPU (RTX 4070), AF LightGBM + BS 2×UNet + стек-LGBM** — конфигурация по умолчанию | **~20–21 с** (BS 15.3 с) |
 | CPU (`--device cpu`), те же модели, TTA выключен | ~53 с (BS 47.3 с) |
 
+Времена 20–21 с и 53 с измерены на свободной машине; контрольный замер под чужой нагрузкой (CPU 99 %) дал 37–40 с и 96 с — на загруженной машине порог 30 с не гарантирован. **GPU и CPU дают немного разные файлы** (на CPU выключен TTA, fp32 вместо fp16; совпадение контуров 0.937); на одном устройстве результат побайтно воспроизводим. Отправленный файл получен на GPU.
 Подробности, профиль этапов и проверки детерминизма — `reports/speed.md`.
 
 Необязательные аргументы: `--sample-submission CSV`, `--config configs/inference.yaml`, `--device auto|cpu|cuda`
@@ -278,12 +285,14 @@ curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/js
 python -m pytest -q
 ```
 
-Покрыто: I/O и обе раскладки meta, RLE по каждому правилу ТЗ, метрика, сборка/валидация submission, фолды, AF-модуль,
+Покрыто: I/O и обе раскладки meta, RLE по каждому правилу ТЗ, метрика, сборка/валидация submission, фолды, AF- и BS-модули,
 сервис, устойчивость инференса (NaN/нули/отсутствующие чипы, коды выхода), побайтная воспроизводимость. Тесты, которым нужны
 данные, пропускаются, если нет `data/train`, `data/test` или `data/test_fake` (`python scripts/make_fake_test.py`).
 На Windows тесты сами передают подпроцессам `PYTHONIOENCODING=utf-8`.
 
 ## 12. Структура репозитория
+
+Размер: 153 МБ отслеживаемых файлов (из них веса 111 МБ, снимок слоёв сервиса 16 МБ, рисунки отчётов ~15 МБ); данные (`data/`, ≈ 3 ГБ) и `service/data/firemon.gpkg` в git не входят.
 
 ```
 inference.py            единственная точка входа инференса (CLI)
@@ -300,13 +309,15 @@ src/firemon/
   splits.py             групповые фолды (тайл / пространственный блок) + временной сплит
   features/             af_features.py (110 признаков AF)
   models/af/            predictor.py (AFPredictor), pipeline.py / train_lgbm.py / dataset.py (обучение), rules.py (правила)
-  models/bs/            rules.py (baseline dNBR); BSPredictor — после слияния task/bs
+  models/bs/            predictor.py (BSPredictor), infer.py, unet.py / lgbm.py / stack.py / ensemble.py (обучение), postprocess.py, rules.py (baseline dNBR)
   postprocess.py, utils.py
 scripts/                check_data.py, check_submission.py, make_fake_test.py, build_service_data.py,
                         make_pipeline_figure.py, bench_inference_parallel.py, af/ (исследования AF)
 service/                FastAPI-приложение, static/ (Leaflet), data/ (снимок слоёв)
 eda/                    eda_af.py, eda_bs.py, test_vs_train.py, tables/
-reports/                eda.md, baseline_review.md, af_module.md, service.md, experiments.md, submissions.md, speed.md,
+presentation/           deck.pptx / deck.pdf, build_deck.py (сборщик слайдов), qa.md (вопросы жюри)
+handoff/                HANDOFF.md — пакет для доработки презентации и защиты
+reports/                report.md / report.pdf, final_numbers.md, eda.md, baseline_review.md, af_module.md, service.md, experiments.md, submissions.md, speed.md,
                         test_vs_train.md, figures/, tasklog/
 tests/                  pytest
 weights/                веса моделей (в git)
@@ -335,12 +346,12 @@ data/, baseline/, out/, submissions/*.csv     не в git
 - **Данные** предоставлены организаторами; источники открытые: VIIRS (NASA, открытые данные), Sentinel-1/2 (Copernicus, свободная
   лицензия), ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Данные о территориях/датах теста, продукты
   FIRMS/VNP14/MCD64A1/FireCCI и ручная разметка теста **не используются**; модели работают только с содержимым чипа.
-- **Предобученные модели:** не используются — LightGBM обучен с нуля на train (при подключении BS-модели с предобученным
-  энкодером лицензия будет указана здесь и в отчёте).
+- **Предобученные модели:** AF — нет (LightGBM обучен с нуля). BS — энкодер resnet34 с весами ImageNet из torchvision
+  (BSD-3-Clause), подключён через segmentation-models-pytorch 0.5.0 (MIT); веса опубликованы задолго до старта.
 - **ПО** — только открытое: LightGBM (MIT), PyTorch (BSD-3), segmentation-models-pytorch (MIT), NumPy/SciPy/pandas (BSD),
   rasterio (BSD-3), GeoPandas/Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet (BSD-2), Leaflet.draw (MIT),
   Swagger UI (Apache-2.0); тексты лицензий Leaflet и Swagger UI — в `service/static/vendor/{leaflet,swagger}/LICENSE`.
 
 ## 14. Команда
 
-{{TEAM}}
+**SAMARKAND:** Кашин Глеб Игоревич, Закон Марк Михайлович, Панин Матвей Евгеньевич, Ожигов Егор Сергеевич, Ведерников Фёдор Яковлевич.
