@@ -103,6 +103,11 @@ class BSPredictor:
         else:
             self.groups = groups_for(self.channels or [])
         self.names = feature_names(self.groups)
+        self._stack_cols = None
+        if self.booster is not None:  # пиксельная LGBM: базовые признаки + dNBR_rel (порядок как при обучении)
+            from .lgbm import BASE_GROUPS
+
+            self._lgbm_cols = [self.names.index(n) for n in feature_names(BASE_GROUPS) + ["dNBR_rel"]]
         self.loaded = True
         return self
 
@@ -156,7 +161,7 @@ class BSPredictor:
         """Среднее UNet и пиксельного LGBM. Без стека LGBM считается только там, где ансамбль в принципе
         может дать «гарь»: w_u·pu + w_l·1 > t ⇔ pu > (t − w_l)/w_u (в остальных пикселях ответ 0 в любом случае)."""
         nthr = int(self.cfg["num_threads"])
-        f = feats.reshape(feats.shape[0], -1)
+        f = feats[self._lgbm_cols].reshape(len(self._lgbm_cols), -1)
         if p_unet is None:
             return self.booster.predict(f.T, num_threads=nthr).T.reshape(4, *feats.shape[1:]).astype(np.float32)
         wu, wl = float(self.cfg["ens_weights"]["unet"]), float(self.cfg["ens_weights"]["lgbm"])
@@ -171,14 +176,16 @@ class BSPredictor:
         return out.reshape(p_unet.shape)
 
     def _stack(self, feats: np.ndarray, p: np.ndarray) -> np.ndarray:
-        from .stack import stack_feature_names, unet_features
+        from .stack import N_UNET_FEATS, stack_feature_names, unet_features
 
-        n_base = len(stack_feature_names()) - 7
+        if self._stack_cols is None:
+            base = stack_feature_names()[:-N_UNET_FEATS]
+            self._stack_cols = [self.names.index(n) for n in base]
         sel = (1.0 - p[0]) > float(self.cfg["stack_gate"])
         out = np.zeros_like(p)
         out[0] = 1.0
         if sel.any():
-            X = np.concatenate([feats[:n_base][:, sel], unet_features(p)[:, sel]], axis=0).T
+            X = np.concatenate([feats[self._stack_cols][:, sel], unet_features(p)[:, sel]], axis=0).T
             out[:, sel] = self.stack.predict(np.ascontiguousarray(X, dtype=np.float32),
                                              num_threads=int(self.cfg["num_threads"])).T
         return out
@@ -206,7 +213,7 @@ class BSPredictor:
         out = []
         for chip, p in zip(chips, probs):
             mask = decode_probs(p, dec.get("t_burn"), tuple(dec.get("w", (1, 1, 1))))
-            out.append(postprocess_bs(mask, chip, self.cfg.get("postprocess")))
+            out.append(postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p))
         return out
 
     def predict(self, chip: dict) -> np.ndarray:

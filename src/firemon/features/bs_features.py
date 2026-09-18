@@ -28,6 +28,10 @@ SCL_CODES = {"nodata": (0, 1), "dark": (2,), "shadow": (3,), "water": (6,), "clo
              "cloud_high": (9,), "cirrus": (10,), "snow": (11,)}
 EPS = 1e-6
 DIST_CAP = 64.0  # px, насыщение расстояния до облака
+# Пороги степени по медианному dNBR 3×3 для основных покровов — оценены по train (EDA, reports/bs_module.md):
+# внутри контура гари правило с этими порогами совпадает с эталоном на 97 %. Остальные покровы — шкала USGS.
+RULE_THR_DEFAULT = (0.10, 0.27, 0.44)
+RULE_THR = {10: (0.125, 0.27, 0.575), 30: (0.065, 0.205, 0.385), 40: (0.07, 0.18, 0.38), 90: (0.08, 0.33, 0.61)}
 
 _INDICES = ["NBR", "NDVI", "NDWI", "NBR2", "MIRBI", "SAVI", "bright"]
 
@@ -43,6 +47,10 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     "ctx": ["dNBR_m3", "dNBR_m7", "dNBR_m15", "dNDVI_m3", "dNDVI_m7", "dNDVI_m15", "dNBR_s7", "dNBR_med3",
             "dNBR_med5"],
     "lcrel": ["dNBR_rel"],
+    "rule": ["rule_sev"],
+    "geom": ["dist_center", "coord_x", "coord_y"],
+    "event": ["dist_strong_cc", "dist_strong_centroid", "dist_dnbr_centroid", "cc_rank", "cc_area_rel",
+              "cc_area_log"],
 }
 FEATURE_NAMES: list[str] = [n for names in FEATURE_GROUPS.values() for n in names]
 GROUP_OF = {n: g for g, names in FEATURE_GROUPS.items() for n in names}
@@ -58,7 +66,12 @@ UNET_CHANNELS: list[str] = (
 )
 
 # v2: + медианный dNBR 3×3 — именно по нему порогуется эталон (см. reports/bs_module.md)
-CHANNEL_SETS: dict[str, list[str]] = {"v1": UNET_CHANNELS, "v2": UNET_CHANNELS + ["dNBR_med3"]}
+# v3: + результат пиксельного правила (степень 0..3) — сети остаётся выбрать, какие пятна относятся к пожару
+CHANNEL_SETS: dict[str, list[str]] = {"v1": UNET_CHANNELS, "v2": UNET_CHANNELS + ["dNBR_med3"],
+                                      "v3": UNET_CHANNELS + ["dNBR_med3", "rule_sev"],
+                                      "v4": UNET_CHANNELS + ["dNBR_med3", "rule_sev", "dist_center"],
+                                      "v5": UNET_CHANNELS + ["dNBR_med3", "rule_sev", "dist_center", "coord_x",
+                                                             "coord_y", "dist_strong_cc", "cc_area_rel"]}
 
 DEFAULT_LC_MEDIANS = {c: 0.25 for c in LC_CODES}
 
@@ -96,6 +109,12 @@ def _box_mean(x: np.ndarray, k: int) -> np.ndarray:
     return ndi.uniform_filter(x, k, mode="reflect")
 
 
+def _gauss(x: np.ndarray, sigma: float) -> np.ndarray:
+    if cv2 is not None:
+        return cv2.GaussianBlur(np.ascontiguousarray(x, dtype=np.float32), (0, 0), sigma, borderType=cv2.BORDER_CONSTANT)
+    return ndi.gaussian_filter(x.astype(np.float32), sigma, mode="constant")
+
+
 def _median(x: np.ndarray, k: int) -> np.ndarray:
     """Медиана k×k (k = 3 или 5: cv2.medianBlur поддерживает float32 только для них)."""
     if cv2 is not None:
@@ -129,6 +148,68 @@ def _indices(r: np.ndarray) -> dict[str, np.ndarray]:
         "SAVI": 1.5 * (r[B8A] - r[B4]) / (r[B8A] + r[B4] + 0.5),
         "bright": (r[B2] + r[B3] + r[B4]) / 3.0,
     }
+
+
+def rule_severity(dnbr_med3: np.ndarray, lc: np.ndarray, scl_pre: np.ndarray, scl_post: np.ndarray) -> np.ndarray:
+    """Пиксельное правило эталона: пороги по медианному dNBR (свои для покрова) + маска SCL → степень 0..3."""
+    sev = np.digitize(dnbr_med3, RULE_THR_DEFAULT).astype(np.float32)
+    for code, thr in RULE_THR.items():
+        sel = lc == code
+        if sel.any():
+            sev[sel] = np.digitize(dnbr_med3[sel], thr)
+    sev[np.isin(scl_pre, (0, 3, 6, 11)) | np.isin(scl_post, (0, 3, 9, 11))] = 0.0
+    return sev
+
+
+def event_features(rule_sev: np.ndarray, dnbr_med3: np.ndarray) -> dict[str, np.ndarray]:
+    """Локализация события по содержимому чипа (эталон размечает только «свой» пожар в буфере ~4 км):
+    расстояния до крупнейшей связной компоненты «сильного dNBR» (правило ≥ 2-й степени) и до её центроида,
+    до dNBR-взвешенного центроида; ранг/относительная площадь компоненты правила, которой принадлежит пиксель."""
+    h, w = rule_sev.shape
+    yy, xx = np.ogrid[:h, :w]
+    norm = 256.0
+    out: dict[str, np.ndarray] = {}
+    strong = rule_sev >= 2
+    lab, n = ndi.label(strong, structure=np.ones((3, 3), bool))
+    if n:
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        sizes[0] = 0
+        big = lab == int(sizes.argmax())
+        out["dist_strong_cc"] = _dist_full(big) / norm
+        cy, cx = ndi.center_of_mass(big)
+        out["dist_strong_centroid"] = (np.hypot(yy - cy, xx - cx) / norm).astype(np.float32)
+    else:
+        out["dist_strong_cc"] = np.full((h, w), 2.0, np.float32)
+        out["dist_strong_centroid"] = np.full((h, w), 2.0, np.float32)
+    wgt = np.clip(dnbr_med3, 0.0, 1.0) * (rule_sev > 0)
+    tot = float(wgt.sum())
+    if tot > 0:
+        cy = float((wgt * yy).sum() / tot)
+        cx = float((wgt * xx).sum() / tot)
+        out["dist_dnbr_centroid"] = (np.hypot(yy - cy, xx - cx) / norm).astype(np.float32)
+    else:
+        out["dist_dnbr_centroid"] = np.full((h, w), 2.0, np.float32)
+    lab1, n1 = ndi.label(rule_sev > 0, structure=np.ones((3, 3), bool))
+    if n1:
+        sizes = np.bincount(lab1.ravel(), minlength=n1 + 1).astype(np.float32)
+        sizes[0] = 0
+        order = np.argsort(-sizes[1:], kind="stable")
+        rank = np.zeros(n1 + 1, np.float32)
+        rank[1 + order] = np.minimum(np.arange(1, n1 + 1), 50)
+        out["cc_rank"] = rank[lab1]
+        out["cc_area_rel"] = (sizes / sizes.max())[lab1]
+        out["cc_area_log"] = np.log1p(sizes)[lab1]
+    else:
+        for k in ("cc_rank", "cc_area_rel", "cc_area_log"):
+            out[k] = np.zeros((h, w), np.float32)
+    return out
+
+
+def _dist_full(mask: np.ndarray) -> np.ndarray:
+    """Евклидово расстояние (px) до ближайшего True без насыщения."""
+    if cv2 is not None:
+        return cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, 5).astype(np.float32)
+    return ndi.distance_transform_edt(~mask).astype(np.float32)
 
 
 def compute_bs_features(chip: dict, lc_medians: dict[int, float] | None = None,
@@ -213,6 +294,19 @@ def compute_bs_features(chip: dict, lc_medians: dict[int, float] | None = None,
             if 0 <= int(c) < 256:
                 lut[int(c)] = max(float(v), 0.02)
         f["dNBR_rel"] = dnbr / lut[np.clip(lc, 0, 255)]
+
+    if "rule" in want:
+        f["rule_sev"] = rule_severity(_median(dnbr, 3), lc, scl_pre, scl_post)
+
+    if "geom" in want:
+        # эталон обрезан буфером события (~4 км); буфер не центрирован по чипу, но слабый радиальный приор есть
+        h, w = dnbr.shape
+        yy, xx = np.ogrid[:h, :w]
+        f["dist_center"] = (np.hypot(yy - (h - 1) / 2.0, xx - (w - 1) / 2.0) / np.hypot(h / 2.0, w / 2.0)).astype(np.float32)
+        f["coord_x"] = np.broadcast_to((xx / (w - 1.0) * 2.0 - 1.0).astype(np.float32), (h, w))
+        f["coord_y"] = np.broadcast_to((yy / (h - 1.0) * 2.0 - 1.0).astype(np.float32), (h, w))
+    if "event" in want:
+        f.update(event_features(rule_severity(_median(dnbr, 3), lc, scl_pre, scl_post), _median(dnbr, 3)))
 
     names = feature_names(None if groups is None else list(want))
     out = np.empty((len(names),) + dnbr.shape, np.float32)

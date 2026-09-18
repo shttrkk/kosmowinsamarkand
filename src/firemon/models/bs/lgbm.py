@@ -24,7 +24,7 @@ from .common import decode_probs, evaluate_masks, fit_decode, fmt, get_splits, l
 
 log = get_logger("bs.lgbm")
 CACHE = REPO_ROOT / "data" / "cache"
-BASE_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel"]  # dNBR_rel добавляется по таблице фолда
+BASE_GROUPS = [g for g in FEATURE_GROUPS if g not in ("lcrel", "rule", "geom", "event")]  # dNBR_rel добавляется по таблице фолда
 FRAC = {"burn": 0.25, "near": 0.30, "cand": 0.10, "rest": 0.02}
 MINIMAL = ["dNBR", "RdNBR", "landcover"]
 
@@ -121,7 +121,7 @@ def fit(X, y, w, params: dict, n_rounds: int, valid=None, regression: bool = Fal
 def predict_chip(booster, chip: dict, med: dict[int, float], cols: list[int], stride: int = 1,
                  regression: bool = False) -> np.ndarray:
     """→ вероятности (4, H/stride, W/stride) float16 (для регрессии — (1, h, w): непрерывная степень)."""
-    feats = compute_bs_features(chip, lc_medians=med)[:, ::stride, ::stride]
+    feats = compute_bs_features(chip, lc_medians=med, groups=BASE_GROUPS + ["lcrel"])[:, ::stride, ::stride]
     h, w = feats.shape[1:]
     X = feats.reshape(feats.shape[0], -1).T[:, cols]
     p = booster.predict(X, num_threads=PARAMS["num_threads"])

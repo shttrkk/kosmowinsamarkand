@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from ...features.bs_features import FEATURE_GROUPS, _box_mean, compute_bs_features, feature_names
+from ...features.bs_features import FEATURE_GROUPS, _box_mean, _gauss, compute_bs_features, feature_names
 from ...utils import REPO_ROOT, get_logger, seed_everything
 from .common import decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
 from .lgbm import PARAMS, fit
@@ -29,7 +29,9 @@ log = get_logger("bs.stack")
 OOF = REPO_ROOT / "data" / "cache" / "bs_oof"
 GATE = 0.03
 STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel"]
-UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5"]
+UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5",
+              "unet_pburn_g20", "unet_pburn_g40", "dist_event"]
+N_UNET_FEATS = len(UNET_FEATS)
 STACK_PARAMS = dict(PARAMS, num_leaves=63, learning_rate=0.05, min_data_in_leaf=300)
 
 
@@ -38,10 +40,17 @@ def stack_feature_names() -> list[str]:
 
 
 def unet_features(p: np.ndarray) -> np.ndarray:
-    """p (4,H,W) float32 → (7,H,W): вероятности + сглаженные p_burn и ожидаемая степень."""
+    """p (4,H,W) float32 → (10,H,W): вероятности, сглаженные p_burn / ожидаемая степень на разных масштабах и
+    расстояние до оценённого центра события (пик ожидаемой степени, сглаженной гауссианом σ=40 px ≈ 0.8 км):
+    эталон размечает только «свой» пожар внутри буфера события, поэтому удалённые пятна — чаще фон."""
     pb = 1.0 - p[0]
     sev = p[1] + 2.0 * p[2] + 3.0 * p[3]
-    return np.stack([p[0], p[1], p[2], p[3], _box_mean(pb, 5), _box_mean(pb, 11), _box_mean(sev, 5)])
+    g40 = _gauss(sev, 40.0)
+    cy, cx = np.unravel_index(int(g40.argmax()), g40.shape)
+    yy, xx = np.ogrid[:p.shape[1], :p.shape[2]]
+    dist = (np.hypot(yy - cy, xx - cx) / 256.0).astype(np.float32)
+    return np.stack([p[0], p[1], p[2], p[3], _box_mean(pb, 5), _box_mean(pb, 11), _box_mean(sev, 5),
+                     _gauss(pb, 20.0), _gauss(pb, 40.0), dist])
 
 
 def stack_matrix(chip: dict, p_unet: np.ndarray, gate: float = GATE):
@@ -82,13 +91,15 @@ def build_rows(chips, probs, idx, frac: float, seed: int = 42):
     return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
 
 
-def run_cv(chips, pu: dict, tag: str, n_rounds: int, frac: float, drop_unet: bool = False) -> dict:
+def run_cv(chips, pu: dict, tag: str, n_rounds: int, frac: float, drop_unet: bool = False,
+           drop_feats: list[str] | None = None) -> dict:
     ids = [c["chip_id"] for c in chips]
     gts = np.stack([c["mask"] for c in chips])
     splits = get_splits(ids)
     names = stack_feature_names()
-    cols = [i for i, n in enumerate(names) if not (drop_unet and n in UNET_FEATS)]
-    res: dict = {"tag": tag, "best_iters": {}, "gate": GATE}
+    drop = set(drop_feats or []) | (set(UNET_FEATS) if drop_unet else set())
+    cols = [i for i, n in enumerate(names) if n not in drop]
+    res: dict = {"tag": tag, "best_iters": {}, "gate": GATE, "dropped": sorted(drop)}
     t0 = time.time()
     parts = rows_per_chip(chips, pu["group"], range(len(chips)), frac)  # по групповому OOF, один раз
     Xall = np.concatenate([p[0] for p in parts])[:, cols]
@@ -155,12 +166,13 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--rounds", type=int, default=300)
     ap.add_argument("--frac", type=float, default=0.35)
     ap.add_argument("--drop-unet", action="store_true", help="абляция: без признаков UNet (только ворота)")
+    ap.add_argument("--drop-feats", nargs="*", default=None, help="абляция: исключить признаки по именам")
     args = ap.parse_args(argv)
     seed_everything(42, with_torch=False)
     chips = load_chips(args.data_dir)
     pu = {s: np.load(OOF / f"{args.unet}_{s}{args.unet_suffix}.npy", mmap_mode="r") for s in ("group", "temporal")}
     if args.stage == "cv":
-        return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet)
+        return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet, args.drop_feats)
     train_full(chips, pu["group"], args.rounds, args.frac, REPO_ROOT / "weights" / "bs_stack.txt")
     return None
 

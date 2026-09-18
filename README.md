@@ -125,6 +125,27 @@ folds = load_folds("af")   # chip_id, fold, temporal_split, group
 python train.py --module all     # пока заглушка; будет дополнено агентами AF/BS
 ```
 
+### Модуль BS (контур гари и степень поражения)
+
+Схема: признаки (`src/firemon/features/bs_features.py`) → UNet-resnet34 выбирает регион гари → LightGBM 2-го уровня
+уточняет пиксели и степень (по медианному dNBR, landcover, SCL и вероятностям UNet) → декодирование порогами →
+постобработка. Подробности и все цифры — `reports/bs_module.md`.
+
+```powershell
+python train.py --module bs                          # всё: правила → LGBM → UNet (CV + full) → стек → декодирование
+python train.py --module bs --bs-stages unet stack ensemble   # отдельные этапы: rules lgbm unet stack ensemble
+python -m firemon.models.bs.lgbm --stage ablate      # абляции признаков (SAR / SCL / landcover / контекст / минимум / регрессия)
+python scripts/bs_report_figures.py                  # рисунки и статистика для reports/bs_module.md
+python scripts/bs_benchmark.py --device cuda         # время BS-инференса на 89 чипах (и --device cpu)
+```
+
+Полный прогон на RTX 4070 ≈ 1 ч (UNet: 6 обучений × 5 мин + full; LGBM CV ≈ 15 мин; стек ≈ 10 мин). Промежуточные
+OOF-вероятности и выборки пикселей кэшируются в `data/cache/` (в git не входят). Результат обучения — файлы
+`weights/bs_unet.pt` (fp16, ≈ 47 МБ, `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3),
+`weights/bs_stack.txt`, `weights/bs_lgbm.txt`, `weights/bs_lc_medians.json`, `weights/bs_decode.json`.
+Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`);
+без GPU автоматически используется CPU-путь (TTA выключен).
+
 ## Сервис
 
 Будет в `service/` (FastAPI + Leaflet). Граница территории мониторинга: `service/data/aoi/fire_monitoring_aoi.geojson`.

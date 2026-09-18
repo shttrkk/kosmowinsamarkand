@@ -21,11 +21,16 @@ from .postprocess import postprocess_bs
 log = get_logger("bs.ensemble")
 OOF = REPO_ROOT / "data" / "cache" / "bs_oof"
 
-POST_STEPS = [("scl_zero", True), ("water_lc_zero", True), ("builtup_zero", True),
+POST_STEPS = [("scl_post_zero", True), ("scl_zero", True), ("water_lc_zero", True), ("builtup_zero", True),
               ("cloud_policy", "fill"), ("cloud_policy", "zero"),  # (а) «как есть» — текущее состояние
-              ("min_component_px", 4), ("min_component_px", 8), ("min_component_px", 16), ("min_component_px", 32),
-              ("min_component_px", 64), ("fill_holes_px", 8), ("fill_holes_px", 32), ("fill_holes_px", 128),
-              ("median_size", 3), ("median_size", 5)]
+              # буфер события: компоненты, пересекающие круг R вокруг оценённого центра / обнуление дальше R
+              ("event_keep_r", 150), ("event_keep_r", 200), ("event_keep_r", 250),
+              ("event_zero_r", 350), ("event_zero_r", 300), ("event_zero_r", 250),
+              # EDA B4c: компоненты относительно крупнейшей
+              ("largest_keep_r", 280), ("largest_keep_r", 200), ("rel_area_pct", 5), ("rel_area_pct", 10),
+              ("rel_area_pct", 20), ("largest_circle_r", 280),
+              ("min_component_px", 25), ("min_component_px", 50), ("min_component_px", 100),  # MMU эталона = 25 px
+              ("fill_holes_px", 8), ("fill_holes_px", 32), ("median_size", 3)]
 
 
 def blend(pa, pb, w_a: float, idx) -> np.ndarray:
@@ -36,20 +41,26 @@ def blend(pa, pb, w_a: float, idx) -> np.ndarray:
     return w_a * np.asarray(pa[idx], np.float32) + (1.0 - w_a) * np.asarray(pb[idx], np.float32)
 
 
-def evaluate_variant(pa: dict, pb: dict | None, w_a: float, gts, splits, chips=None, post=None) -> dict:
-    """pa/pb — {'group': oof, 'temporal': oof}. Метрики обоих сплитов + параметры декодирования."""
+def evaluate_variant(pa: dict, pb: dict | None, w_a: float, gts, splits, chips=None, post=None,
+                     decs: dict | None = None) -> dict:
+    """pa/pb — {'group': oof, 'temporal': oof}. Метрики обоих сплитов (+ подмножество облачных чипов
+    cloud_frac > 0.25 по групповому OOF, если переданы chips) + параметры декодирования.
+    decs — уже подобранное декодирование {'group': …, 'temporal': …} (постобработка его не меняет)."""
     out = {}
     all_idx = np.arange(len(gts))
     t_tr, t_va = splits["temporal"][0]
     for split, fit_idx, val_idx in (("group", all_idx, all_idx), ("temporal", t_tr, t_va)):
-        dec = fit_decode(blend(pa["group"], pb and pb["group"], w_a, fit_idx), gts[fit_idx])
+        dec = decs[split] if decs else fit_decode(blend(pa["group"], pb and pb["group"], w_a, fit_idx), gts[fit_idx])
         pv = blend(pa[split], pb and pb[split], w_a, val_idx)
         preds = {}
         for j, i in enumerate(val_idx):
             m = decode_probs(pv[j], dec["t_burn"], dec["w"])
-            preds[i] = postprocess_bs(m, chips[i], post) if post else m
+            preds[i] = postprocess_bs(m, chips[i], post, probs=pv[j]) if post else m
         out[split] = evaluate_masks(preds, {i: gts[i] for i in val_idx})
         out[f"decode_{split}"] = dec
+        if split == "group" and chips is not None:
+            cl = [i for i in val_idx if float(chips[i]["meta"].get("cloud_frac") or 0) > 0.25]
+            out["cloudy"] = evaluate_masks({i: preds[i] for i in cl}, {i: gts[i] for i in cl})
     return out
 
 
@@ -66,6 +77,7 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--lgbm", default="main")
     ap.add_argument("--stack", default=None, help="тег стека: постобработка подбирается для него (финальная модель)")
     ap.add_argument("--no-write", action="store_true", help="не перезаписывать weights/bs_decode.json")
+    ap.add_argument("--skip-weights", action="store_true", help="пропустить перебор весов ансамбля UNet+LGBM")
     args = ap.parse_args(argv)
 
     chips = load_chips(args.data_dir)
@@ -88,7 +100,7 @@ def main(argv: list[str] | None = None) -> dict:
         res["lgbm_only"] = evaluate_variant(pl, None, 1.0, gts, splits)
         show("LGBM", res["lgbm_only"])
     # 1) веса ансамбля UNet(TTA)+LGBM
-    grid = [1.0] if pl is None else [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.3]
+    grid = [1.0] if pl is None or args.skip_weights else [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.3]
     for w in grid:
         res["weights"][str(w)] = r = evaluate_variant(pu_tta, pl, w, gts, splits)
         show(f"UNet+TTA w_unet={w}", r)
@@ -100,19 +112,28 @@ def main(argv: list[str] | None = None) -> dict:
 
     # 2) постобработка финальной модели: жадно, шаг принимается при приросте на обоих сплитах
     pa, pb, w = (ps, None, 1.0) if ps is not None else (pu_tta, pl, best_w)
-    cur = evaluate_variant(pa, pb, w, gts, splits)
+    cur = evaluate_variant(pa, pb, w, gts, splits, chips)
+    decs = {"group": cur["decode_group"], "temporal": cur["decode_temporal"]}
     res["final_raw"] = cur
     show("финальная модель (raw)", cur)
     post: dict = {}
+    raw = cur
+    for key, val in POST_STEPS:  # каждый шаг отдельно от «сырого» выхода — для таблицы вкладов в отчёте
+        r = evaluate_variant(pa, pb, w, gts, splits, chips, {key: val}, decs)
+        res.setdefault("post_alone", {})[f"{key}={val}"] = {
+            s: r[s]["bs_part"] - raw[s]["bs_part"] for s in ("group", "temporal", "cloudy")}
+        res["post_alone"][f"{key}={val}"].update({f"{s}_metrics": r[s] for s in ("group", "temporal", "cloudy")})
     for key, val in POST_STEPS:
         trial = {**post, key: val}
-        r = evaluate_variant(pa, pb, w, gts, splits, chips, trial)
+        r = evaluate_variant(pa, pb, w, gts, splits, chips, trial, decs)
         dg = r["group"]["bs_part"] - cur["group"]["bs_part"]
         dt = r["temporal"]["bs_part"] - cur["temporal"]["bs_part"]
         ok = dg > 0 and dt > 0
-        res["post"][f"{key}={val}"] = {"group": r["group"], "temporal": r["temporal"], "d_group": dg,
-                                       "d_temporal": dt, "accepted": ok}
-        log.info("post %-22s Δgroup %+.4f Δtemporal %+.4f → %s", f"{key}={val}", dg, dt, "принят" if ok else "нет")
+        dc = r["cloudy"]["bs_part"] - cur["cloudy"]["bs_part"]
+        res["post"][f"{key}={val}"] = {"group": r["group"], "temporal": r["temporal"], "cloudy": r["cloudy"],
+                                       "d_group": dg, "d_temporal": dt, "d_cloudy": dc, "accepted": ok}
+        log.info("post %-22s Δgroup %+.4f Δtemporal %+.4f Δоблачные(>0.25) %+.4f → %s", f"{key}={val}", dg, dt, dc,
+                 "принят" if ok else "нет")
         if ok:
             post, cur = trial, r
     res["postprocess"], res["final"], res["final_decode"] = post, cur, cur["decode_group"]
