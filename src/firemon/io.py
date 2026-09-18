@@ -1,6 +1,7 @@
 """Чтение чипов AF/BS → dict с массивами (C, H, W) и описаниями каналов.
 
-`data_dir` — корень выборки (data/train, data/test): внутри af/ и bs/ с meta.csv.
+`data_dir` — корень выборки (data/train, data/test): внутри af/ и bs/. meta.csv — либо в каждом
+модуле (`<kind>/meta.csv`, train), либо один общий в корне с колонкой `kind` (тест).
 
 ВАЖНО (Windows): каталог данных называется `aux` — это зарезервированное имя
 устройства DOS. Файлы внутри открываются нормально, но сам каталог нельзя
@@ -60,30 +61,52 @@ def chip_path(data_dir: str | Path, kind: str, layer: tuple[str, str], chip_id: 
     return Path(data_dir) / kind / layer[0] / f"{chip_id}_{layer[1]}.tif"
 
 
+def meta_path(data_dir: str | Path, kind: str) -> tuple[Path, bool]:
+    """Путь к meta.csv и признак «общий файл в корне».
+
+    Две раскладки: train — `<data-dir>/<kind>/meta.csv`; тест организаторов — один
+    `<data-dir>/meta.csv` на оба модуля (нужен фильтр по колонке `kind`).
+    """
+    per_kind = Path(data_dir) / kind / "meta.csv"
+    if per_kind.exists():
+        return per_kind, False
+    root = Path(data_dir) / "meta.csv"
+    if root.exists():
+        return root, True
+    raise FileNotFoundError(per_kind)
+
+
 @lru_cache(maxsize=16)
-def _read_meta_cached(path: str, mtime: float) -> pd.DataFrame:
-    return pd.read_csv(path)
+def _read_meta_cached(path: str, mtime: float, kind: str | None) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if kind is None:
+        return df
+    if "kind" in df.columns:
+        sel = df["kind"].astype(str).str.lower() == kind
+    else:  # на всякий случай: общий meta без колонки kind — по префиксу chip_id
+        sel = df["chip_id"].astype(str).str[:2].str.lower() == kind
+    return df[sel].reset_index(drop=True)
 
 
 def read_meta(data_dir: str | Path, kind: str) -> pd.DataFrame:
-    """meta.csv модуля (кэшируется; train и test имеют разный набор колонок)."""
-    path = Path(data_dir) / kind / "meta.csv"
-    if not path.exists():
-        raise FileNotFoundError(path)
-    return _read_meta_cached(str(path), path.stat().st_mtime)
+    """meta.csv модуля (кэшируется; train и test имеют разный набор колонок и раскладку)."""
+    path, shared = meta_path(data_dir, kind)
+    return _read_meta_cached(str(path), path.stat().st_mtime, kind if shared else None)
 
 
 @lru_cache(maxsize=16)
-def _meta_index(path: str, mtime: float) -> dict[str, dict]:
-    df = _read_meta_cached(path, mtime)
+def _meta_index(path: str, mtime: float, kind: str | None) -> dict[str, dict]:
+    df = _read_meta_cached(path, mtime, kind)
     return {r["chip_id"]: r for r in df.to_dict("records")}
 
 
 def _meta_row(data_dir: str | Path, kind: str, chip_id: str) -> dict:
-    path = Path(data_dir) / kind / "meta.csv"
-    if not path.exists():
+    try:
+        path, shared = meta_path(data_dir, kind)
+    except FileNotFoundError:
         return {"chip_id": chip_id, "kind": kind}
-    return _meta_index(str(path), path.stat().st_mtime).get(chip_id, {"chip_id": chip_id, "kind": kind})
+    index = _meta_index(str(path), path.stat().st_mtime, kind if shared else None)
+    return index.get(chip_id, {"chip_id": chip_id, "kind": kind})
 
 
 def list_chips(data_dir: str | Path, kind: str) -> list[str]:

@@ -62,8 +62,11 @@ New-Item -ItemType Directory -Force data | Out-Null
 tar -xf "C:\path\to\fire-train-renamed.tar" -C data
 python scripts/check_data.py                 # 420 AF × 3 файла, 224 BS × 6 файлов → «ВСЁ ОК»
 
-# test (когда выдан): распаковать в data/test, sample_submission.csv — в baseline/ или data/test/
-python scripts/check_data.py --split test    # 269 чипов, 447 строк шаблона
+# test: внутри архива лежит каталог test/ (вместе с meta.csv и sample_submission.csv)
+tar -xf "C:\path\to\fire-test-renamed.tar" -C data
+New-Item -ItemType Directory -Force baseline | Out-Null
+Copy-Item data\test\sample_submission.csv baseline\sample_submission.csv   # необязательная копия шаблона
+python scripts/check_data.py --split test    # 180 AF × 2 файла, 89 BS × 5 файлов, 447 строк шаблона → «ВСЁ ОК»
 ```
 
 Ожидаемая структура:
@@ -71,9 +74,19 @@ python scripts/check_data.py --split test    # 269 чипов, 447 строк ш
 ```
 data/train/af/{meta.csv, viirs/, aux/, masks/}
 data/train/bs/{meta.csv, sentinel2_pre/, sentinel2_post/, sentinel1_pre/, sentinel1_post/, aux/, masks/}
-data/test/…            то же без masks/
-baseline/sample_submission.csv
+
+data/test/meta.csv                 один общий на оба модуля: chip_id,kind,width,height,gsd,valid_frac,cloud_frac (180 af + 89 bs)
+data/test/sample_submission.csv    шаблон: 447 строк chip_id,class_id,rle (rle пустая) — AF по 1 строке, BS по 3
+data/test/af/{viirs/, aux/}        AF_te_000001_VIIRS_I1-I5.tif, AF_te_000001_AUX.tif
+data/test/bs/{sentinel2_pre/, sentinel2_post/, sentinel1_pre/, sentinel1_post/, aux/}
+baseline/sample_submission.csv     копия шаблона (запасное место поиска)
 ```
+
+Раскладка теста отличается от train: масок нет, `meta.csv` один в корне (а не `af/meta.csv` + `bs/meta.csv`).
+Код поддерживает обе: сначала ищется `<data-dir>/<kind>/meta.csv`, иначе `<data-dir>/meta.csv` с фильтром по колонке
+`kind`. Если `meta.csv` нет вовсе, список чипов берётся из `sample_submission.csv` / имён файлов. Геопривязки в тестовых
+GeoTIFF нет — инференсу она не нужна. Baseline и скрипты RLE/метрики организаторы не выдавали: формат submission
+реализован строго по тексту ТЗ (`tests/test_rle_spec.py`).
 
 > **Windows:** `aux` — зарезервированное имя устройства. Файлы внутри `aux/` читаются нормально, но сам каталог
 > нельзя открыть в Проводнике/PowerShell или создать обычным `mkdir`. Код использует `firemon.io.win_path()`
@@ -89,14 +102,18 @@ python inference.py --data-dir data/test --output out/submission.csv
 - параметры: `--config configs/inference.yaml`;
 - без интерактива, код выхода 0, в конце печатается полное время; результат автоматически валидируется.
 
-Проверка файла и оценка по известным маскам:
+Проверка файла перед отправкой (валидатор формата + сводка: пиксели по классам, пустые маски) и оценка по известным маскам:
 
 ```powershell
-python -m firemon.submission --validate out/submission.csv --sample baseline/sample_submission.csv --data-dir data/test
+python scripts/check_submission.py out/submission.csv      # шаблон и размеры чипов берутся из data/test
+python -m firemon.submission --validate out/submission.csv --sample data/test/sample_submission.csv --data-dir data/test
 python -m firemon.metrics --submission out/submission_fake.csv --masks-dir data/train --sample-submission data/test_fake/sample_submission.csv
 ```
 
-Сквозная проверка без настоящего теста (20 AF + 10 BS чипов из train в тестовой структуре):
+Отправленные на лидерборд файлы хранятся в `submissions/` (первый — `submission_stub.csv`, правила-baseline, проверка формата).
+Сдвиг распределений test vs train: `python eda/test_vs_train.py` → `reports/test_vs_train.md`.
+
+Сквозная проверка с метрикой (20 AF + 10 BS чипов из train с известными масками, раскладка train):
 
 ```powershell
 python scripts/make_fake_test.py
@@ -135,5 +152,5 @@ python train.py --module all     # пока заглушка; будет доп�
 python -m pytest -q
 ```
 
-Тесты, которым нужны данные, пропускаются, если `data/train` или `data/test_fake` отсутствуют.
-Тесты совместимости с официальными RLE/метрикой пропускаются, пока нет `baseline/`.
+Тесты, которым нужны данные, пропускаются, если `data/train`, `data/test` или `data/test_fake` отсутствуют.
+Официальных скриптов RLE/метрики нет — кодек проверяется по правилам ТЗ на ручных примерах (`tests/test_rle_spec.py`).
