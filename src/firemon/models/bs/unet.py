@@ -210,7 +210,8 @@ def save_checkpoint(model, path: Path, args, norm: dict) -> None:
                 "channels": norm["channels"], "norm": norm}, path)
 
 
-def prepare_tensors(data_dir: str | Path, norm_path: Path | None = None, channels: list[str] | None = None):
+def prepare_tensors(data_dir: str | Path, norm_path: Path | None = None, channels: list[str] | None = None,
+                    target: str = "burn4", zone_radius: int = 10):
     """Сырые каналы float16 (N,C,H,W) в pinned-памяти + статистика нормализации (применяется на GPU)."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -232,6 +233,16 @@ def prepare_tensors(data_dir: str | Path, norm_path: Path | None = None, channel
             s1 += a
             s2 += b
     y = np.stack([c["mask"] for c in chips])
+    if target == "zone":
+        # «зона события»: морфологическое замыкание эталонной гари (радиус zone_radius) + заливка дыр → 0/1.
+        # Гладкая цель: сети не нужно воспроизводить попиксельный спекл правила dNBR — только ГДЕ «свой» пожар.
+        from scipy import ndimage as ndi
+
+        yy, xx = np.ogrid[-zone_radius:zone_radius + 1, -zone_radius:zone_radius + 1]
+        disk = (yy * yy + xx * xx) <= zone_radius * zone_radius
+        y = np.stack([ndi.binary_fill_holes(ndi.binary_closing(np.pad(m > 0, zone_radius), structure=disk)
+                                            [zone_radius:-zone_radius, zone_radius:-zone_radius] | (m > 0))
+                      for m in y]).astype(np.uint8)
     n = len(chips) * 512 * 512
     mean = s1 / n
     std = np.sqrt(np.maximum(s2 / n - mean ** 2, 1e-12))
@@ -275,6 +286,8 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--val-every", type=int, default=5)
     ap.add_argument("--class-weights", type=float, nargs=4, default=[0.5, 1.0, 1.0, 1.2])
     ap.add_argument("--channels", default="v1", choices=sorted(CHANNEL_SETS))
+    ap.add_argument("--target", default="burn4", choices=["burn4", "zone"], help="zone — бинарная «зона события»")
+    ap.add_argument("--zone-radius", type=int, default=10)
     ap.add_argument("--folds", type=int, nargs="*", default=None, help="только эти фолды (отладка)")
     args = ap.parse_args(argv)
 
@@ -282,7 +295,7 @@ def main(argv: list[str] | None = None) -> dict:
     weights = weights_dir()
     weights.mkdir(parents=True, exist_ok=True)
     ids, x, y, norm = prepare_tensors(args.data_dir, weights / f"bs_norm_{args.tag}.json" if args.split == "full" else None,
-                                      CHANNEL_SETS[args.channels])
+                                      CHANNEL_SETS[args.channels], args.target, args.zone_radius)
     result: dict = {"tag": args.tag, "split": args.split, "args": vars(args)}
 
     if args.split == "full":

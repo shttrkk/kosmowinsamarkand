@@ -36,8 +36,19 @@ N_UNET_FEATS = len(UNET_FEATS)
 STACK_PARAMS = dict(PARAMS, num_leaves=63, learning_rate=0.05, min_data_in_leaf=300)
 
 
-def stack_feature_names() -> list[str]:
-    return feature_names(STACK_GROUPS) + UNET_FEATS
+AUX_FEATS = ["aux_p", "aux_m5", "aux_g10", "aux_g30"]  # на каждый доп. канал вероятностей (напр. «зона события»)
+
+
+def stack_feature_names(n_aux: int = 0) -> list[str]:
+    return feature_names(STACK_GROUPS) + UNET_FEATS + [f"{n}_{k}" for k in range(n_aux) for n in AUX_FEATS]
+
+
+def aux_features(aux: np.ndarray) -> np.ndarray:
+    """aux (K,H,W) — дополнительные каналы вероятностей (5-й и далее каналы файла OOF) → (4K,H,W)."""
+    out = []
+    for a in aux:
+        out += [a, _box_mean(a, 5), _gauss(a, 10.0), _gauss(a, 30.0)]
+    return np.stack(out)
 
 
 def unet_features(p: np.ndarray) -> np.ndarray:
@@ -57,11 +68,15 @@ def unet_features(p: np.ndarray) -> np.ndarray:
 def stack_matrix(chip: dict, p_unet: np.ndarray, gate: float = GATE):
     """→ (X (n,F) float32, sel (H,W) bool) — строки только для пикселей-«ворот»."""
     p = np.asarray(p_unet, np.float32)
+    p, aux = p[:4], p[4:]
     sel = (1.0 - p[0]) > gate
     if not sel.any():
-        return np.zeros((0, len(stack_feature_names())), np.float32), sel
+        return np.zeros((0, len(stack_feature_names(len(aux)))), np.float32), sel
     feats = compute_bs_features(chip, groups=STACK_GROUPS)
-    X = np.concatenate([feats[:, sel], unet_features(p)[:, sel]], axis=0).T
+    parts = [feats[:, sel], unet_features(p)[:, sel]]
+    if len(aux):
+        parts.append(aux_features(aux)[:, sel])
+    X = np.concatenate(parts, axis=0).T
     return np.ascontiguousarray(X, dtype=np.float32), sel
 
 
@@ -123,7 +138,7 @@ def run_cv(chips, pu: dict, tag: str, n_rounds: int, frac: float, drop_unet: boo
     ids = [c["chip_id"] for c in chips]
     gts = np.stack([c["mask"] for c in chips])
     splits = get_splits(ids)
-    names = stack_feature_names()
+    names = stack_feature_names(pu["group"].shape[1] - 4)
     drop = set(drop_feats or []) | (set(UNET_FEATS) if drop_unet else set())
     cols = [i for i, n in enumerate(names) if n not in drop]
     res: dict = {"tag": tag, "best_iters": {}, "gate": GATE, "dropped": sorted(drop)}
