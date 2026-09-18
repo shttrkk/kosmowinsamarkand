@@ -54,16 +54,32 @@ def dice_loss(logits: torch.Tensor, target: torch.Tensor, classes=(1, 2, 3), eps
     return loss / len(classes)
 
 
+def _weighted_onehot(target: torch.Tensor, weight: torch.Tensor, dtype) -> torch.Tensor:
+    """(B,4,H,W): вес класса на месте эталонного класса, 0 для ignore (255)."""
+    oh = F.one_hot(target.clamp(max=3), 4).permute(0, 3, 1, 2).to(dtype) * (target != 255).unsqueeze(1)
+    return oh * weight.view(1, -1, 1, 1)
+
+
+def ce_loss(logits: torch.Tensor, target: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """Взвешенная CE через one-hot — то же значение, что F.cross_entropy(weight=…), но ДЕТЕРМИНИРОВАННЫЙ backward:
+    у штатного nll_loss2d на CUDA обратный проход недетерминирован, из-за него два обучения с одним seed расходились
+    (BS-часть OOF ±0.01). С этой реализацией веса двух прогонов побитно равны (reports/bs_module.md, «Воспроизводимость»)."""
+    logp = F.log_softmax(logits.float(), 1)
+    wmap = _weighted_onehot(target, weight, logp.dtype)
+    return -(wmap * logp).sum() / wmap.sum().clamp_min(1e-6)
+
+
 def focal_loss(logits: torch.Tensor, target: torch.Tensor, weight: torch.Tensor, gamma: float = 2.0) -> torch.Tensor:
     logp = F.log_softmax(logits.float(), 1)
-    ce = F.nll_loss(logp, target, weight=weight, reduction="none", ignore_index=255)
-    pt = logp.gather(1, target.clamp(max=3).unsqueeze(1)).squeeze(1).exp()
+    wmap = _weighted_onehot(target, weight, logp.dtype)
+    ce = -(wmap * logp).sum(1)
+    pt = (F.one_hot(target.clamp(max=3), 4).permute(0, 3, 1, 2).to(logp.dtype) * logp).sum(1).exp()
     return ((1 - pt) ** gamma * ce).mean()
 
 
 def make_loss(name: str, class_weights: torch.Tensor):
     def ce_dice(lo, t):
-        return F.cross_entropy(lo.float(), t, weight=class_weights, ignore_index=255) + dice_loss(lo, t)
+        return ce_loss(lo, t, class_weights) + dice_loss(lo, t)
 
     def focal_dice(lo, t):
         return focal_loss(lo, t, class_weights) + dice_loss(lo, t)

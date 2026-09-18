@@ -26,7 +26,7 @@
 | AF | правило-baseline `I4>320 K & I4−I5>15 K` | F1 0.2435 (весь train) | — | строка 0 `reports/experiments.md` |
 | AF | **LightGBM по кандидатам (AF-17)** | **F1 0.9682** | **F1 0.9597** | `reports/af_module.md` |
 | BS | baseline: dNBR 0.10/0.27/0.44 | IoU_burn 0.3706, mIoU_sev 0.3129 (весь train) | — | текущий бэкенд `rules` |
-| BS | **2×UNet-resnet34 → стек-LGBM + постобработка** | **IoU_burn 0.7631, mIoU_sev 0.7614** | **IoU_burn 0.7761, mIoU_sev 0.7720** | `reports/bs_module.md` |
+| BS | **2×UNet-resnet34 → стек-LGBM + постобработка (без TTA)** | **IoU_burn 0.7560, mIoU_sev 0.7554** | **IoU_burn 0.7723, mIoU_sev 0.7684** | `reports/bs_module.md` |
 
 | Отправка на public-лидерборд | Состав | Score |
 |---|---|---|
@@ -133,8 +133,8 @@ python inference.py --data-dir data/test --output out/submission.csv
 | CPU, venv (i5-13600KF, 8 потоков) — AF LightGBM + BS baseline | **~10–11 с** (9.3–12.4) |
 | CPU, Docker-образ `firemon` (включая запуск контейнера) | 11.1–11.5 с |
 | CPU, один поток (`--workers 1`) | ~19–21 с |
-| **GPU (RTX 4070), AF LightGBM + BS 2×UNet + стек-LGBM** — конфигурация по умолчанию | **~20–21 с** (BS 15.3 с) |
-| CPU (`--device cpu`), те же модели, TTA выключен | ~53 с (BS 47.3 с) |
+| **GPU (RTX 4070), AF LightGBM + BS 2×UNet + стек-LGBM** — конфигурация по умолчанию | **~21–22 с** (BS ≈ 16 с; без TTA, fp32) |
+| CPU (`--device cpu`), те же модели и настройки | ~52 с (BS 47 с); файл отличается от GPU на 1 пиксель из 23.3 млн |
 
 Подробности, профиль этапов и проверки детерминизма — `reports/speed.md`.
 
@@ -244,8 +244,15 @@ python scripts/bs_log_experiments.py                 # перенос резул
 нужно ≈ 8 ГБ диска и ≈ 16 ГБ RAM). Результат обучения — `weights/bs_unet_r34_cedice.pt` и `weights/bs_unet_r34_v4.pt`
 (fp16, по 47 МБ; `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3; в git добавлены через `git add -f`),
 `weights/bs_stack.txt`, `weights/bs_lgbm.txt`, `weights/bs_lc_medians.json`, `weights/bs_decode.json`.
-Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`);
-без GPU автоматически используется CPU-путь (TTA выключен).
+Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`, `gpu_half`);
+без GPU автоматически используется CPU-путь. **TTA выключен на всех устройствах, UNet на GPU считается в fp32**: прирост
+от TTA на OOF всего +0.0043 / +0.0024 BS-части (< 0.005), зато результат не зависит от устройства — GPU- и CPU-файлы на
+тесте отличаются 1 пикселем из 23.3 млн (`python scripts/compare_submissions.py a.csv b.csv`), повторные запуски на одном
+устройстве побайтно одинаковы. Режим с TTA (чуть точнее, UNet ×4 по времени; результат GPU и CPU тогда различается
+сильнее только если включить TTA не на обоих): `tta: true`, `tta_cpu: true`, `stack_weights: weights/bs_stack_tta.txt`,
+`decode_file: weights/bs_decode_tta.json`. Проверка воспроизводимости обучения:
+`python train.py --module bs --weights-dir weights_repro/` (свой кэш `data/cache/bs_weights_repro/`, основные веса не
+затрагиваются) → `python scripts/bs_repro_compare.py` и инференс с `--config configs/inference_bs_repro.yaml`.
 
 ## 10. Сервис
 

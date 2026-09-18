@@ -127,6 +127,21 @@ def test_event_postprocess():
     assert circ[20, 20] == 2 and circ[115, 115] == 0
 
 
+def test_deterministic_ce_matches_torch():
+    """Детерминированная CE (one-hot) численно равна F.cross_entropy с весами и ignore_index=255."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("segmentation_models_pytorch")
+    import torch.nn.functional as F
+
+    from firemon.models.bs.unet import ce_loss
+
+    torch.manual_seed(0)
+    lo, t = torch.randn(2, 4, 16, 16), torch.randint(0, 4, (2, 16, 16))
+    t[0, 0, :3] = 255
+    w = torch.tensor([0.5, 1.0, 1.0, 1.2])
+    assert abs(float(ce_loss(lo, t, w)) - float(F.cross_entropy(lo, t, weight=w, ignore_index=255))) < 1e-5
+
+
 def test_nonempty_prior():
     """Приор «событие есть в каждом чипе»: срабатывает только при < 25 px гари и только если есть компонента ≥ 25 px."""
     chip = make_chip(9, size=64)
