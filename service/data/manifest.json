@@ -1,0 +1,21 @@
+{
+ "built_at": "2026-09-18T17:05:14Z",
+ "pred_models": {
+  "af": "rules-stub",
+  "bs": "rules-stub"
+ },
+ "counts": {
+  "gt": {
+   "hotspots": 9725,
+   "burn_scars": 43674
+  },
+  "pred": {
+   "hotspots": 63065,
+   "burn_scars": 49323
+  }
+ },
+ "n_chips": {
+  "af": 420,
+  "bs": 224
+ }
+}

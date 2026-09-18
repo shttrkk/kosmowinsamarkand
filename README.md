@@ -127,7 +127,28 @@ python train.py --module all     # пока заглушка; будет доп�
 
 ## Сервис
 
-Будет в `service/` (FastAPI + Leaflet). Граница территории мониторинга: `service/data/aoi/fire_monitoring_aoi.geojson`.
+Веб-карта + REST API (FastAPI + Leaflet): по полигону/bbox и интервалу дат — термоточки, контуры гарей
+(GeoJSON/Shapefile, атрибуты id/класс/площадь) и справка по площадям (JSON/CSV). Подробности — `reports/service.md`.
+
+```powershell
+# зависимости те же (requirements.txt). Сервис стартует сразу после клонирования — из снимка эталонных
+# слоёв service/data/*.geojson.gz. Полная пересборка (эталон + предсказания моделей, нужен data/train, ~2 мин):
+python scripts/build_service_data.py            # --source gt|pred|both (по умолчанию both)
+
+python -m uvicorn service.app:app --host 0.0.0.0 --port 8000      # или: python service/run.py
+```
+
+Открыть: http://localhost:8000 — карта (кнопка «Демо-запрос»), http://localhost:8000/docs — OpenAPI.
+
+```bash
+# 1) справка по площадям (JSON; format=csv — таблица)
+curl "http://localhost:8000/api/v1/summary?bbox=39.25,47.95,39.50,48.10&date_from=2024-09-15&date_to=2024-10-10"
+# 2) контуры гарей в Shapefile (zip: shp+shx+dbf+prj+cpg)
+curl -o burn_scars_shp.zip "http://localhost:8000/api/v1/burn-scars?bbox=39.25,47.95,39.50,48.10&format=shp"
+# 3) всё одним запросом: термоточки + гари + справка (область — bbox или GeoJSON-полигон в поле geometry)
+curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/json"      -d '{"bbox":[39.25,47.95,39.50,48.10],"date_from":"2024-09-15","date_to":"2024-10-10","source":"gt"}'
+```
+В PowerShell вместо `curl` — `curl.exe` (или `Invoke-RestMethod`).
 
 ## Тесты
 

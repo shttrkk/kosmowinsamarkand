@@ -1,0 +1,188 @@
+# Информационно-аналитический сервис
+
+Веб-приложение и REST API: по **полигону или bbox + интервалу дат** возвращает (1) термоточки VIIRS,
+(2) векторные контуры гарей с атрибутами id / класс степени / площадь (GeoJSON, Shapefile),
+(3) аналитическую справку — суммарная площадь гарей, га, и распределение по трём степеням (JSON, CSV).
+
+![Демо-запрос](figures/service_demo.png)
+
+## 1. Архитектура
+
+```
+data/train (GeoTIFF-чипы + meta.csv)          service/
+        │                                       app.py        FastAPI: эндпоинты, разбор параметров, 422
+        ▼                                       core.py       чистые функции: отбор, clip, площади, справка, экспорт
+scripts/build_service_data.py                   vectorize.py  растр → вектор (термоточки, контуры, фильтр спеклов)
+  └─ service/build.py + vectorize.py            build.py      сборка/чтение слоёв
+        │   маски gt + предсказания моделей     predictors.py адаптеры AFPredictor/BSPredictor (fallback: правила)
+        ▼                                       static/       index.html + app.js + style.css, vendor/ (Leaflet, Leaflet.draw)
+service/data/firemon.gpkg  (hotspots, burn_scars, chips; EPSG:4326)   ← не в git (176 МБ)
+service/data/*.geojson.gz  (снимок только gt, 16 МБ)                  ← в git: сервис стартует без data/train
+service/data/manifest.json, aoi/fire_monitoring_aoi.geojson
+```
+
+ТЗ разрешает работать на заранее подготовленном наборе сцен: источник — 420 AF- и 224 BS-чипа train
+(у них есть геопривязка, даты и маски). Слой `source=gt` — эталонная разметка, `source=pred` — предсказания наших
+моделей на тех же сценах. При старте всё читается в память (≈8 с): `shapely.STRtree` по геометриям, массивы дат
+`datetime64[D]`, копия контуров в UTM, **заранее сериализованные строки GeoJSON Feature**. Ответ собирается
+конкатенацией строк, поэтому запрос по всему охвату за весь период (9 725 термоточек + 43 674 контура, 52 МБ JSON)
+обрабатывается за **≈0.4 с** (цель ТЗ < 2 с), демо-запрос — за 6–15 мс.
+
+## 2. Схема данных
+
+**`hotspots`** (Point, EPSG:4326 — центр пикселя VIIRS 375 м):
+
+| поле | описание |
+|---|---|
+| `hotspot_id` | `<chip_id>_<source>_<row>_<col>` |
+| `chip_id`, `acq_datetime` (UTC ISO), `satellite` | сцена, время пролёта, SNPP/NOAA20/NOAA21 |
+| `i4_bt`, `i5_bt` | яркостная температура I4 (3.74 мкм) и I5 (11.45 мкм), K |
+| `daynight` | `night`, если solar_zenith > 90° |
+| `landcover` | код ESA WorldCover |
+| `confidence` | вероятность модели; для gt = 1.0; для заглушки на правилах — null |
+| `source` | `gt` / `pred` |
+| `epsg`, `x_utm`, `y_utm`, `gsd` | служебные: из них по запросу (`as_pixels=true`) строится полигон пикселя 375×375 м |
+
+**`burn_scars`** (Polygon/MultiPolygon, EPSG:4326):
+
+| поле (GeoJSON) | поле (Shapefile) | описание |
+|---|---|---|
+| `contour_id` | `cid` | `<chip_id>_<source>_<класс>_<№>` |
+| `chip_id`, `fire_event_id` | `chip_id`, `event_id` | сцена и пожар |
+| `severity_class` | `sev_cls` | 1 / 2 / 3; 0 — объединённый контур всей гари (только при `with_union=true`) |
+| `severity_label` | `sev_lbl` | слабая / средняя / сильная |
+| `area_ha` | `area_ha` | площадь в га, рассчитана в UTM (после clip — пересчитана) |
+| `date_pre`, `date_post` | то же | даты снимков Sentinel-2 до и после пожара |
+| `source` | `source` | `gt` / `pred` |
+
+**`chips`** — охваты сцен с датами (индекс набора; показывается на карте, `GET /api/v1/chips`).
+
+## 3. Как считаются площади
+
+1. Маска степени (20 м) векторизуется `rasterio.features.shapes` **в CRS чипа — UTM 37N/38N**; площадь =
+   `geom.area / 10 000` га, т. е. ровно 0.04 га на пиксель. `simplify(5 м, preserve_topology)` на «лесенке» 20-метровых
+   пикселей убирает только коллинеарные вершины и площадь не меняет.
+2. **Фильтр спеклов < 3 пикселей, сохраняющий площадь.** Наблюдение: эталонные маски очень «шумные» (99 тыс. полигонов
+   на 224 чипа); прямолинейный `sieve` по классам вливает приграничную мелочь в фон и теряет до 5.7 % площади чипа
+   (105 чипов из 224 выходят за ±1 % от `burn_area_ha`). Решение (`vectorize.despeckle_severity`): изолированные пятна
+   гари < 3 px удаляются, а мелкие фрагменты классов *внутри* гари вливаются в соседний класс гари, но не в фон.
+   Итог: 43.7 тыс. полигонов, **макс. отклонение суммарной площади от `meta.burn_area_ha` — 0.025 %, чипов с
+   отклонением > 1 % — 0** (сверка печатается при каждой сборке). Цена — перераспределение между классами: медиана
+   0.9 % площади гари чипа, максимум 4 %; `--min-pixels 1` отключает фильтр и даёт точное совпадение по классам.
+3. Хранение и выдача — EPSG:4326 (координаты на сетке 1e-7° ≈ 1 см). Контуры, **целиком** лежащие в области запроса,
+   отдаются с площадью, посчитанной при сборке. Контуры, **пересекающие границу** запроса, обрезаются: область запроса
+   уплотняется (вершины через 0.005°, т. к. прямая в градусах — не прямая в UTM), переводится в UTM-зону чипа,
+   `intersection` выполняется в UTM, площадь пересчитывается, кусок переводится обратно в 4326.
+4. Справка суммирует площади контуров классов 1–3 после clip; `by_severity` всегда суммируется в `area_total_ha`.
+   `aoi_area_km2` — геодезическая площадь области запроса (WGS84).
+
+Временной отбор: термоточка попадает в период по дате пролёта (UTC, границы включительно); гарь — если интервал
+`[date_pre, date_post]` пересекается с периодом запроса (пожар произошёл между снимками).
+
+Тесты (`tests/test_service.py`) проверяют: площадь по bbox и датам чипа = `burn_area_ha` ±1 %; половины чипа в сумме
+дают целое; на синтетике clip пополам даёт ровно половину; площадь из атрибута = площади геометрии в UTM.
+
+## 4. REST API
+
+Запуск: `python -m uvicorn service.app:app --host 0.0.0.0 --port 8000` (или `python service/run.py`).
+Интерактивная документация — `/docs` (OpenAPI; ![](figures/service_openapi.png)).
+
+| метод | путь | назначение |
+|---|---|---|
+| POST | `/api/v1/query` | всё одним запросом: `geometry` (GeoJSON Polygon/MultiPolygon) **или** `bbox`, `date_from`, `date_to`, `source`, `layers`, `hotspots_as_pixels`, `with_union` |
+| GET | `/api/v1/query/{query_id}/{layer}?format=` | выгрузка результата POST-запроса (в т. ч. для нарисованного полигона): `hotspots`/`burn_scars` — `geojson\|shp`, `summary` — `json\|csv` |
+| GET | `/api/v1/hotspots?bbox=&date_from=&date_to=&source=&format=geojson\|shp&as_pixels=` | термоточки |
+| GET | `/api/v1/burn-scars?bbox=&date_from=&date_to=&source=&format=geojson\|shp&with_union=` | контуры гарей; `shp` — zip с shp+shx+dbf+prj+cpg, UTF-8, EPSG:4326 |
+| GET | `/api/v1/summary?bbox=&date_from=&date_to=&source=&format=json\|csv` | справка |
+| GET | `/api/v1/aoi`, `/api/v1/chips`, `/api/v1/dates`, `/api/v1/health` | граница территории, охваты сцен, доступные даты, состояние и состав данных |
+
+Ошибки параметров (невалидная/самопересекающаяся геометрия, не Polygon, bbox с minx ≥ maxx, дата не `YYYY-MM-DD`,
+`date_from > date_to`, неизвестный `source`, не задана область или заданы и `bbox`, и `geometry`) → **422** с текстом.
+
+### Примеры
+
+```bash
+curl "http://localhost:8000/api/v1/summary?bbox=39.25,47.95,39.50,48.10&date_from=2024-09-15&date_to=2024-10-10"
+```
+```json
+{"area_total_ha":1758.92,
+ "by_severity":{"1":{"area_ha":114.96,"share_pct":6.54,"label":"слабая"},
+                "2":{"area_ha":951.92,"share_pct":54.12,"label":"средняя"},
+                "3":{"area_ha":692.04,"share_pct":39.34,"label":"сильная"}},
+ "n_contours":337,"n_fire_events":1,"n_hotspots":98,"n_hotspots_day":84,"n_hotspots_night":14,
+ "period":{"date_from":"2024-09-15","date_to":"2024-10-10"},"source":"gt","aoi_area_km2":311.01,
+ "crs_note":"площади рассчитаны в UTM 37N/38N (EPSG:32637/32638), пиксель 20 м = 0.04 га",
+ "generated_at":"2026-09-18T17:06:08Z"}
+```
+(в `meta.csv` у этого чипа `burn_area_ha = 1758.92` — совпадение точное.)
+
+```bash
+curl "http://localhost:8000/api/v1/summary?bbox=39.25,47.95,39.50,48.10&format=csv"
+```
+```
+indicator,severity_class,label,value,unit
+area,1,слабая,114.96,ha
+share,1,слабая,6.54,%
+…
+area_total,,суммарная площадь гари,1758.92,ha
+```
+
+```bash
+curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/json" \
+  -d '{"bbox":[39.25,47.95,39.50,48.10],"date_from":"2024-09-15","date_to":"2024-10-10","layers":["burn_scars","summary"]}'
+```
+```json
+{"query_id":"91fb9cd2cf79",
+ "burn_scars":{"type":"FeatureCollection","features":[{"type":"Feature",
+   "properties":{"contour_id":"BS_tr_000202_gt_1_0001","chip_id":"BS_tr_000202","fire_event_id":"FE22648",
+                 "severity_class":1,"severity_label":"слабая","area_ha":0.12,
+                 "date_pre":"2024-09-21","date_post":"2024-10-04","source":"gt"},
+   "geometry":{"type":"MultiPolygon","coordinates":[…]}}, …]},
+ "summary":{…},
+ "meta":{"n_hotspots":98,"n_burn_scars":337,"n_clipped":0,"source":"gt","elapsed_ms":14.0}}
+```
+
+```bash
+curl -o burn_scars_shp.zip "http://localhost:8000/api/v1/burn-scars?bbox=39.25,47.95,39.50,48.10&format=shp"
+# burn_scars.cpg  burn_scars.dbf  burn_scars.prj  burn_scars.shp  burn_scars.shx
+curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/json" -d '{"bbox":[1,2,3,4],"date_from":"2024-99-01"}'
+# 422 {"detail":"date_from: ожидается дата в формате YYYY-MM-DD, получено «2024-99-01»"}
+```
+
+## 5. Веб-интерфейс
+
+`http://localhost:8000/` — одна страница без фреймворков (Leaflet 1.9.4 + Leaflet.draw 1.0.4, **локальные копии** в
+`static/vendor/`, лицензии BSD-2/MIT).
+
+- область: инструменты «прямоугольник»/«полигон» на карте (с правкой и удалением), ручной ввод bbox, «Весь охват»;
+- период (по умолчанию — весь архив из `/dates`), переключатель эталон/модель, «Запросить», **«Демо-запрос»**
+  (bbox `39.25,47.95,39.50,48.10`, 2024-09-15…2024-10-10: 98 термоточек + гарь 1 758.92 га);
+- термоточки: красные — день, фиолетовые — ночь, popup с атрибутами; гари: жёлтый/оранжевый/красный по степени,
+  popup с площадью; canvas-рендерер держит весь архив (см. скриншот ниже);
+- панель справки: площади и доли по степеням, всего, число контуров/пожаров/термоточек, площадь области;
+- выгрузки: гари и термоточки — GeoJSON и Shapefile, справка — JSON и CSV (через `query_id`, поэтому работают и для
+  нарисованного полигона);
+- подложка OSM; переключатель «Без подложки»; если тайлы недоступны (нет сети на защите), интерфейс сам переключается
+  на пустую подложку с границей AOI и охватами сцен.
+
+![Весь охват, весь период](figures/service_full_extent.png)
+![Слой pred](figures/service_demo_pred.png)
+
+## 6. Ограничения и развитие
+
+- Сервис работает на подготовленном наборе сцен, а не скачивает снимки. **Подключить новые чипы**: положить их в
+  каталог той же структуры, что `data/train` (GeoTIFF с геопривязкой + `meta.csv` с `acq_datetime` / `date_pre`,
+  `date_post`), и выполнить `python scripts/build_service_data.py --data-dir <каталог>`; без каталога `masks/`
+  соберётся только слой `pred`. Тестовые чипы соревнования подключить нельзя — у них нет геопривязки и дат (и правила
+  запрещают её восстанавливать).
+- Слой `pred` сейчас построен **заглушками на правилах** (`manifest.json: pred_models = rules-stub`): финальных
+  `AFPredictor`/`BSPredictor` в этой ветке ещё нет. Заглушка dNBR даёт «соль и перец», поэтому для неё фильтр
+  спеклов грубее (25 px). После слияния веток моделей: `python scripts/build_service_data.py --source both` —
+  адаптер `service/predictors.py` подхватит классы автоматически (контракт: `Predictor(config).load()`,
+  `.predict(chip)`, опционально `.predict_proba(chip)` → `confidence`).
+- В git лежит только снимок gt (16 МБ); полный GeoPackage (176 МБ) пересобирается скриптом за ~2 мин.
+- Пожары разных лет на одном месте суммируются как отдельные события (это корректно для площади, пройденной огнём,
+  но не для «уникальной» площади).
+- Данные выходят за bbox границы AOI (тайлы AF шире территории) — «Весь охват» берётся по охватам сцен.
+- `/docs` (Swagger UI) грузит свои скрипты с CDN — без интернета доступен `/openapi.json`, сам сервис и карта работают.
+- `query_id` хранится в памяти процесса (последние 256 запросов); после перезапуска выгрузка по старому id → 404.

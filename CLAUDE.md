@@ -137,6 +137,7 @@ fire-monitoring/
 - Чтение: AF ≈ 17 мс/чип (viirs+aux+mask), BS ≈ 70 мс/чип (все 5 слоёв + маска); узкое место — распаковка deflate, rasterio отпускает GIL → при необходимости читать в `ThreadPoolExecutor`.
 - В train годы 2019–2024, а README к AOI говорит о сезонах 2019–2025 → private-тест, вероятно, содержит 2025 год; временной сплит (val=2024) — самая честная оценка.
 - RLE шумных BS-масок длиннее стандартного лимита поля `csv` (131072) — читать submission только через `firemon.submission.read_submission` (лимит поднят) или pandas.
+- **Сервис (задача 06)**: `service/` (FastAPI + Leaflet), запуск `python -m uvicorn service.app:app --port 8000`; данные — `python scripts/build_service_data.py --source both` (перезапустить после появления финальных `AFPredictor`/`BSPredictor`: адаптер `service/predictors.py` ждёт `Predictor(config).load()/.predict(chip)` и опционально `.predict_proba(chip)`). В git — только снимок gt `service/data/*.geojson.gz`; `firemon.gpkg` не коммитить. Описание — `reports/service.md`.
 - Фейковый тест: `python scripts/make_fake_test.py` → `data/test_fake/` (20 AF + 10 BS) и `baseline/sample_submission_FAKE.csv` (шаблон по всему train для OOF-оценки через `evaluate_submission`; НЕ файл организаторов).
 
 ## 9. Формат отчёта о выполненной задаче
