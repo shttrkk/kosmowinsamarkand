@@ -34,8 +34,10 @@
 |---|---|---|---|
 | оба baseline-правила (`submission_stub.csv`) | 0.3088 | — | 0.3117 |
 | + AF LightGBM (`submission_af.csv`) | 0.5625 | 0.5499 | 0.6035 → F1_af на public ≈ 0.93–0.99 |
-| + BS 2×UNet → стек-LGBM, вариант с TTA и fp16 (`submission_v3_af_bs.csv`) | 0.8344 | 0.8392 | не вписан |
-| **+ BS, финал: без TTA, fp32 — результат не зависит от устройства (`submission_v4_final.csv`)** | **0.8300** | **0.8367** | ожидается (public v4) |
+| + BS 2×UNet → стек-LGBM, вариант с TTA и fp16 (`submission_v3_af_bs.csv`) | 0.8344 | 0.8392 | 0.8267 |
+| **+ BS, финал: без TTA, fp32 — результат не зависит от устройства (`submission_v4_final.csv`)** | **0.8300** | **0.8367** | **0.8262** |
+
+Public финала на 0.004–0.010 ниже локальных оценок — переобучения нет; Δ −0.0005 между двумя последними отправками — цена детерминизма CPU/GPU (отказ от TTA и fp16).
 
 Единый источник всех чисел — `reports/final_numbers.md`; полный отчёт — `reports/report.md` (`reports/report.pdf`),
 презентация — `presentation/deck.pptx`, пакет для защиты — `handoff/HANDOFF.md`.
