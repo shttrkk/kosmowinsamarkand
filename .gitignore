@@ -42,3 +42,6 @@ Thumbs.db
 
 # EDA: кэш признаков пересчитывается скриптами eda/*.py
 eda/cache/
+
+# временные lock-файлы MS Office (презентация открыта в PowerPoint)
+~$*
