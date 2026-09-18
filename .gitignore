@@ -1,0 +1,36 @@
+# данные и выданные организаторами материалы — только локально (якорь / — чтобы не задеть service/data)
+/data/
+/baseline/
+/out/
+
+# растровые/векторные тяжёлые артефакты
+*.tif
+*.tiff
+*.tar
+*.zip
+service/data/*.gpkg
+service/data/cache/
+
+# веса: маленькие коммитим, большие (>50 МБ) — по ссылке из README
+weights/*.pt
+weights/*.pth
+weights/*.ckpt
+!weights/.gitkeep
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+*.log

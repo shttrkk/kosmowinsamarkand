@@ -1,0 +1,12 @@
+# Конфиг inference.py. Сейчас — заглушки на правилах (задача 01); агенты AF/BS заменят секции af/bs.
+seed: 42
+num_threads: 4
+
+af:
+  model: rules
+  i4_min: 320.0      # K
+  di45_min: 15.0     # K, I4 − I5
+
+bs:
+  model: rules
+  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная
