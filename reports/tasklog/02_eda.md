@@ -30,7 +30,7 @@ $env:PYTHONIOENCODING='utf-8'
 ```
 
 ## Тесты
-`python -m pytest -q` — зелёный (57 passed, 2 skipped) (EDA не трогает `src/`, новых тестов нет: скрипты аналитические).
+`$env:PYTHONIOENCODING='utf-8'; python -m pytest -q` — зелёный (57 passed, 2 skipped). Без `PYTHONIOENCODING=utf-8` на Windows падает `tests/test_inference_smoke.py::test_inference_cli_smoke` (stdout подпроцесса приходит в cp1251, тест ищет кириллическую строку в UTF-8) — проблема существовала до этой задачи, `tests/` и `src/` не трогал; предложение: в тесте передавать `env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}` (EDA не трогает `src/`, новых тестов нет: скрипты аналитические).
 
 ## Метрики (OOF, train; это диагностические модели EDA, не кандидаты в submission)
 - AF, LightGBM на 3 признаках по кандидатам: F1 0.9127 (KFold) / 0.9127 (GroupKFold) / 0.8765 (val=2024); с dem+метео+landcover: 0.9309 / 0.9322 / 0.8917. Правило день/ночь: 0.921 на всём train.
