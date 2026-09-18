@@ -1,7 +1,8 @@
 """Точка входа обучения: python train.py --module af|bs|all
 
 AF: признаки → кэш data/cache/af_train.npz → 5 фолдов LightGBM → OOF/временной сплит → weights/af_lgbm_*.
-BS: пока заглушка на правилах (src/firemon/models/bs/rules.py) — подключает агент BS-модуля.
+BS: правила → LightGBM по пикселям → 2×UNet (CV + full) → стек-LGBM → декодирование/постобработка → weights/bs_*
+    (src/firemon/models/bs/pipeline.py; этапы выбираются через --bs-stages).
 Обязательные требования: seed_everything(42), фолды из configs/folds_{af,bs}.csv,
 запись результата в reports/experiments.md.
 """
@@ -22,6 +23,8 @@ def main() -> int:
     ap.add_argument("--config", default=None, help="yaml-конфиг модуля (для af по умолчанию configs/af_lgbm.yaml)")
     ap.add_argument("--no-log", action="store_true", help="не дописывать строку в reports/experiments.md")
     ap.add_argument("--rebuild-cache", action="store_true", help="пересчитать кэш признаков")
+    ap.add_argument("--bs-stages", nargs="*", default=None,
+                    help="этапы BS: rules lgbm unet stack ensemble (по умолчанию все)")
     args = ap.parse_args()
     if args.module in ("af", "all"):
         from firemon.models.af.pipeline import train_af
@@ -30,7 +33,9 @@ def main() -> int:
         cfg = load_config(args.config or ROOT / "configs" / "af_lgbm.yaml")
         train_af(cfg, args.data_dir, log_experiment=not args.no_log, rebuild_cache=args.rebuild_cache)
     if args.module in ("bs", "all"):
-        print("[train] модуль 'bs': обучаемая модель ещё не подключена — используются правила-заглушки.")
+        from firemon.models.bs.pipeline import run as run_bs
+
+        run_bs(args.data_dir or str(ROOT / "data" / "train"), args.bs_stages)
     return 0
 
 

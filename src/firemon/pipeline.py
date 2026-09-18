@@ -181,6 +181,23 @@ def bs_rules_backend(data_dir: Path, chip_ids: list[str], cfg: dict, ctx: RunCon
     return preds, sum(p is None for p in parts)
 
 
+def bs_unet_backend(data_dir: Path, chip_ids: list[str], cfg: dict, ctx: RunContext):
+    """BSPredictor: 2×UNet → стек-LGBM → декодирование → постобработка (reports/bs_module.md).
+    Параметры — configs/bs_inference.yaml, ключи секции `bs` общего конфига их перекрывают; устройство и потоки — из ctx.
+    Нет весов → исключение → `run_backend` откатывается на fallback."""
+    from .models.bs.infer import load_bs_config, run_bs_inference
+
+    bs_cfg = load_bs_config({k: v for k, v in cfg.items() if k != "fallback"})
+    bs_cfg["device"] = ctx.torch_device()
+    bs_cfg["num_threads"] = max(1, ctx.workers)
+    preds, n_failed, _ = run_bs_inference(data_dir, chip_ids, bs_cfg, ctx.shapes, profiler=ctx.profiler,
+                                          require_models=True)
+    for c in chip_ids:
+        if c not in preds:
+            preds[c] = empty_mask("bs", c, ctx)
+    return preds, n_failed
+
+
 # ───────────────────── реестры: ЕДИНСТВЕННОЕ место подключения моделей ─────────────────────
 
 Backend = Callable[[Path, list, dict, RunContext], tuple]
@@ -191,10 +208,8 @@ AF_BACKENDS: dict[str, Backend] = {
 }
 
 BS_BACKENDS: dict[str, Backend] = {
+    "unet": bs_unet_backend,   # BSPredictor (task/bs): 2×UNet + стек-LGBM
     "rules": bs_rules_backend,
-    # После слияния task/bs — добавить одну строку, например:
-    #   "unet": bs_unet_backend,   # обёртка над BSPredictor(cfg).load() / predict_batch(chips), устройство — ctx.torch_device()
-    # и выставить `bs.model: unet` в configs/inference.yaml. Остальной код менять не нужно.
 }
 
 BACKENDS = {"af": AF_BACKENDS, "bs": BS_BACKENDS}

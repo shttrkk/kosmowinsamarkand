@@ -144,7 +144,17 @@ def test_stub_prediction_roundtrip(broken_dir, tmp_path):
     sample = tmp_path / "sample.csv"
     sample.write_text("chip_id,class_id,rle\n" + "".join(f"{cid},{k},\n" for k in (1, 2, 3)), encoding="utf-8")
     out = tmp_path / "s.csv"
-    assert _run("--data-dir", str(broken_dir), "--output", str(out), "--sample-submission", str(sample)).returncode == 0
+    # тест про путь backend → RLE → csv, поэтому бэкенд фиксирован: правила dNBR (по умолчанию теперь bs.model: unet)
+    import yaml
+
+    from firemon.utils import load_config
+
+    cfg = load_config(ROOT / "configs" / "inference.yaml")
+    cfg["bs"] = {**cfg["bs"], "model": "rules"}
+    cfg_path = tmp_path / "inference_rules.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+    assert _run("--data-dir", str(broken_dir), "--output", str(out), "--sample-submission", str(sample),
+                "--config", str(cfg_path)).returncode == 0
     sub = read_submission(out)
     masks = {int(k): rle_decode(r, (512, 512)) for k, r in zip(sub["class_id"], sub["rle"])}
     assert masks[3][100:200, 50:300].all() and masks[3].sum() == 100 * 250 and not masks[1].any() and not masks[2].any()

@@ -9,6 +9,6 @@ af:
   num_threads: 8         # потоки LightGBM predict; предсказание по строкам независимо → результат от числа не зависит
 
 bs:
-  model: rules           # rules — пороги dNBR (заглушка). После слияния task/bs: имя нового бэкенда, веса — в weights/
-  fallback: rules
+  model: unet            # unet — BSPredictor (2×UNet + стек-LGBM), параметры в configs/bs_inference.yaml; rules — пороги dNBR
+  fallback: rules        # если веса weights/bs_* не найдены
   dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная (только для model: rules)

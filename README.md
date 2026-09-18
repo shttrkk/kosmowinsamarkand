@@ -8,9 +8,9 @@
    (раздельные пороги день/ночь) → 110 признаков (контекст окон, z-score, признаки блика, landcover, метео) →
    среднее 5 фолд-моделей LightGBM → порог по OOF.
 2. **BS (Burn Severity)** — по чипу 512×512 @20 м (Sentinel-2/1 pre/post + DEM/slope/landcover): маска степени поражения 0–3.
-   Сейчас в `main` — baseline на порогах dNBR; обучаемая модель (`BSPredictor`) подключается отдельным бэкендом
-   (см. «[Как подключить модель](#как-подключить-модель)»).
-3. **`inference.py`** → `submission.csv` в формате RLE, одна команда, ~10 с на CPU, результат побайтно воспроизводим.
+   Два UNet-resnet34 выбирают регион «своего» пожара → LightGBM 2-го уровня уточняет пиксели и степень (медианный dNBR,
+   landcover, SCL, признаки локализации события) → пороги → постобработка (`BSPredictor`, бэкенд `unet`).
+3. **`inference.py`** → `submission.csv` в формате RLE, одна команда, ~20 с на GPU / ~53 с на CPU, результат побайтно воспроизводим.
 4. **Сервис** (FastAPI + Leaflet): термоточки, контуры гарей (GeoJSON/Shapefile), справка по площадям в га.
 5. Отчёты в `reports/` (EDA, baseline, эксперименты, скорость, отправки).
 
@@ -26,7 +26,7 @@
 | AF | правило-baseline `I4>320 K & I4−I5>15 K` | F1 0.2435 (весь train) | — | строка 0 `reports/experiments.md` |
 | AF | **LightGBM по кандидатам (AF-17)** | **F1 0.9682** | **F1 0.9597** | `reports/af_module.md` |
 | BS | baseline: dNBR 0.10/0.27/0.44 | IoU_burn 0.3706, mIoU_sev 0.3129 (весь train) | — | текущий бэкенд `rules` |
-| BS | BSPredictor | — | — | обучается в ветке `task/bs`, будет дополнено |
+| BS | **2×UNet-resnet34 → стек-LGBM + постобработка** | **IoU_burn 0.7631, mIoU_sev 0.7614** | **IoU_burn 0.7761, mIoU_sev 0.7720** | `reports/bs_module.md` |
 
 | Отправка на public-лидерборд | Состав | Score |
 |---|---|---|
@@ -133,7 +133,8 @@ python inference.py --data-dir data/test --output out/submission.csv
 | CPU, venv (i5-13600KF, 8 потоков) — AF LightGBM + BS baseline | **~10–11 с** (9.3–12.4) |
 | CPU, Docker-образ `firemon` (включая запуск контейнера) | 11.1–11.5 с |
 | CPU, один поток (`--workers 1`) | ~19–21 с |
-| GPU | не используется текущими моделями; появится вместе с BS-моделью |
+| **GPU (RTX 4070), AF LightGBM + BS 2×UNet + стек-LGBM** — конфигурация по умолчанию | **~20–21 с** (BS 15.3 с) |
+| CPU (`--device cpu`), те же модели, TTA выключен | ~53 с (BS 47.3 с) |
 
 Подробности, профиль этапов и проверки детерминизма — `reports/speed.md`.
 
@@ -187,23 +188,28 @@ GPU-образ: `docker build -f Dockerfile.gpu -t firemon:gpu .`, запуск 
 
 ## 8. Веса
 
-Веса лежат **в git** в `weights/` (суммарно ~5 МБ, лимит 100 МБ не превышен) — отдельно скачивать ничего не нужно:
+Веса лежат **в git** в `weights/` (AF ~5 МБ; BS ~101 МБ: два файла по 47 МБ — каждый меньше лимита 50 МБ) — отдельно скачивать ничего не нужно:
 
 ```
 weights/
   af_lgbm_fold0.txt … af_lgbm_fold4.txt   5 фолд-моделей LightGBM (текстовый формат)
   af_lgbm_meta.json                        список признаков, порог по OOF, параметры кандидатов
-  (веса BS-модели появятся здесь после слияния task/bs)
+  bs_unet_r34_cedice.pt, bs_unet_r34_v4.pt  два UNet-resnet34, fp16 (в .gitignore стоит weights/*.pt → `git add -f`)
+  bs_stack.txt                             LightGBM 2-го уровня (основная модель BS)
+  bs_lgbm.txt, bs_lc_medians.json          пиксельный LightGBM (режим use_lgbm, в финале выключен)
+  bs_decode.json                           пороги декодирования и постобработка, подобранные по OOF
 ```
 
 Нет весов AF → `inference.py` автоматически переходит на контекстное правило (OOF F1 0.8965) с ошибкой в логе.
-Предобученные сторонние модели сейчас не используются.
+Нет весов BS → бэкенд `unet` откатывается на `rules` (пороги dNBR) с ошибкой в логе.
+Предобученные сторонние веса: энкодер resnet34 (ImageNet, torchvision BSD-3) через `segmentation_models_pytorch` (MIT) — только в BS-модели.
 
 ## 9. Обучение
 
 ```
 python train.py --module af      # AF: признаки → data/cache/af_train.npz → 5 фолдов LightGBM → weights/af_lgbm_*
-python train.py --module all     # af + bs (bs — пока baseline на правилах, обучать нечего)
+python train.py --module bs      # BS: правила → LGBM → 2×UNet (CV + full) → стек → декодирование (≈ 1.5 ч, GPU)
+python train.py --module all     # af + bs
 ```
 
 AF: ~1.5 мин с расчётом кэша признаков, ~30 с с готовым кэшем (8 потоков CPU, GPU не нужна). Печатает OOF F1
@@ -216,6 +222,30 @@ AF: ~1.5 мин с расчётом кэша признаков, ~30 с с го�
 колонка `temporal_split` (val = 2024). Пересоздание: `python -m firemon.splits --data-dir data/train` (seed 42).
 Исследовательские скрипты AF (для воспроизведения сабмита не нужны): `scripts/af/*.py` — сетка правила, абляции,
 постобработка, ансамбль, профиль, рисунки; EDA: `python eda/eda_af.py`, `python eda/eda_bs.py`, `python eda/test_vs_train.py`.
+
+### Модуль BS (контур гари и степень поражения)
+
+Схема: признаки (`src/firemon/features/bs_features.py`) → два UNet-resnet34 (среднее) выбирают регион гари → LightGBM 2-го уровня
+уточняет пиксели и степень (по медианному dNBR, landcover, SCL и вероятностям UNet) → декодирование порогами →
+постобработка. Подробности и все цифры — `reports/bs_module.md`.
+
+```powershell
+python train.py --module bs                          # всё: правила → LGBM → UNet (CV + full) → стек → декодирование
+python train.py --module bs --bs-stages unet stack ensemble   # отдельные этапы: rules lgbm unet stack ensemble
+python -m firemon.models.bs.lgbm --stage ablate      # абляции признаков (SAR / SCL / landcover / контекст / минимум / регрессия)
+python scripts/bs_report_figures.py                  # рисунки и статистика для reports/bs_module.md
+python scripts/bs_benchmark.py --device cuda         # время BS-инференса на 89 чипах (и --device cpu)
+python scripts/bs_eda_checks.py --probs stack_avg14_event   # проверка фактов EDA об эталоне (буфер события, SCL, MMU, степень)
+python scripts/bs_log_experiments.py                 # перенос результатов из data/cache/bs_oof/*.json в reports/experiments.md
+```
+
+Полный прогон на RTX 4070 ≈ 1.5 ч (UNet: 2 сети × (6 обучений × 5 мин + full); LGBM CV ≈ 15 мин; стек ≈ 15 мин; подбор
+постобработки ≈ 10 мин). Промежуточные OOF-вероятности и выборки пикселей кэшируются в `data/cache/` (в git не входят,
+нужно ≈ 8 ГБ диска и ≈ 16 ГБ RAM). Результат обучения — `weights/bs_unet_r34_cedice.pt` и `weights/bs_unet_r34_v4.pt`
+(fp16, по 47 МБ; `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3; в git добавлены через `git add -f`),
+`weights/bs_stack.txt`, `weights/bs_lgbm.txt`, `weights/bs_lc_medians.json`, `weights/bs_decode.json`.
+Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`);
+без GPU автоматически используется CPU-путь (TTA выключен).
 
 ## 10. Сервис
 
