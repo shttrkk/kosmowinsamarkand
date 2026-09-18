@@ -62,7 +62,8 @@ def main() -> int:
     # пока нет настоящего baseline/sample_submission.csv. НЕ является файлом организаторов.
     full = [(c, 1, "") for c in read_meta(train_dir, "af")["chip_id"]]
     full += [(c, k, "") for c in read_meta(train_dir, "bs")["chip_id"] for k in (1, 2, 3)]
-    fake = ROOT / "baseline" / "sample_submission_FAKE.csv"
+    # Кладётся в --out-dir, а НЕ в baseline/: baseline/ — каталог организаторов, только для чтения (CLAUDE.md §8).
+    fake = out_dir / "sample_submission_FAKE.csv"
     write_submission(full, fake)
     print(f"{fake}: {len(full)} строк (шаблон по train, только для тестов)")
     return 0

@@ -10,7 +10,7 @@
 
 Метрика: `Score = 0.35·F1_af + 0.35·IoU_burn + 0.30·mIoU_sev` (микро-усреднение по пикселям всех чипов).
 
-> Статус: инфраструктура готова (I/O, RLE, метрика, сабмит, фолды, тесты). AF — LightGBM (OOF F1 0.9686, temporal 0.9560, см. `reports/af_module.md`). BS пока — правила-заглушки.
+> Статус: инфраструктура готова (I/O, RLE, метрика, сабмит, фолды, тесты). AF — LightGBM (OOF F1 0.9682, temporal 0.9597, см. `reports/af_module.md`). BS пока — правила-заглушки.
 
 ## Структура
 
@@ -127,9 +127,9 @@ python train.py --module af      # AF: признаки → data/cache/af_train.
 python train.py --module all     # bs — пока заглушка
 ```
 
-AF (~40 с на 8 потоках): печатает OOF F1 (GroupKFold по тайлу), F1 на временном сплите (val = 2024), срезы, пишет
+AF (~1.5 мин на 8 потоках): печатает OOF F1 (GroupKFold по тайлу), F1 на временном сплите (val = 2024), срезы, пишет
 `reports/af_train_report.json` и строку в `reports/experiments.md` (`--no-log` — не писать; `--rebuild-cache` — пересчитать
-кэш признаков). Детерминировано: повторный запуск из чистого состояния даёт OOF F1 0.9686 / temporal 0.9560 и побитово
+кэш признаков). Детерминировано: повторный запуск из чистого состояния даёт OOF F1 0.9682 / temporal 0.9597 и побитово
 те же веса. Исследовательские скрипты (не нужны для воспроизведения сабмита):
 
 ```powershell
@@ -139,6 +139,8 @@ python scripts/af/postprocess_eval.py     # гистерезис / одиноч�
 python scripts/af/ensemble_vs_single.py   # 5 фолд-моделей vs одна модель
 python scripts/af/profile_inference.py --data-dir data/test_fake
 python scripts/af/make_report_figures.py  # reports/figures/af_*.png
+python scripts/af/candidate_margin.py     # запас огня до порогов кандидатов (AF-17)
+python scripts/af/test_sanity.py          # статистика test vs train → reports/af_test_sanity.md
 ```
 
 ## Сервис

@@ -137,14 +137,15 @@ fire-monitoring/
 - Чтение: AF ≈ 17 мс/чип (viirs+aux+mask), BS ≈ 70 мс/чип (все 5 слоёв + маска); узкое место — распаковка deflate, rasterio отпускает GIL → при необходимости читать в `ThreadPoolExecutor`.
 - В train годы 2019–2024, а README к AOI говорит о сезонах 2019–2025 → private-тест, вероятно, содержит 2025 год; временной сплит (val=2024) — самая честная оценка.
 - RLE шумных BS-масок длиннее стандартного лимита поля `csv` (131072) — читать submission только через `firemon.submission.read_submission` (лимит поднят) или pandas.
-- Фейковый тест: `python scripts/make_fake_test.py` → `data/test_fake/` (20 AF + 10 BS) и `baseline/sample_submission_FAKE.csv` (шаблон по всему train для OOF-оценки через `evaluate_submission`; НЕ файл организаторов).
+- Фейковый тест: `python scripts/make_fake_test.py` → `data/test_fake/` (20 AF + 10 BS) и `<out-dir>/sample_submission_FAKE.csv` (в `baseline/` скрипт больше не пишет; шаблон по всему train для OOF-оценки через `evaluate_submission`; НЕ файл организаторов).
 
 ### Модуль AF (задача 03) — использовать, не дублировать
 - `firemon.models.af.predictor.AFPredictor(cfg).load()` → `predict(chip)` (маска 0/1), `predict_proba(chip)`, `predict_many(chips)`; функция `predict_af(chip)`. Веса: `weights/af_lgbm_fold{0..4}.txt` + `af_lgbm_meta.json` (порог, список признаков). Нет весов → `inference.py` откатывается на `rules.predict_af_context` (контекстное правило, OOF F1 0.8965).
 - Признаки: `firemon.features.af_features` — `compute_af_features(chip)` (F,H,W), `af_feature_rows(chip, mask)` (n,F), `candidate_mask`, `FEATURE_NAMES` (110). Модель обучается и применяется ТОЛЬКО на кандидатах (recall кандидатов на train 100 %).
-- Метрики AF: OOF F1 0.9686 (GroupKFold), 0.9560 (temporal 2024). Постобработка (гистерезис и др.) проверена и отклонена. Детали — `reports/af_module.md`.
+- Метрики AF (финал, AF-17): OOF F1 0.9682 (GroupKFold), 0.9597 (temporal 2024). Постобработка (гистерезис и др.) проверена и отклонена. Детали — `reports/af_module.md`.
 - Кэш пиксельного датасета — `data/cache/af_train.npz` (npz, не parquet: в окружении нет `pyarrow`).
-- `scripts/make_fake_test.py` ВСЕГДА перезаписывает `baseline/sample_submission_FAKE.csv`, даже при `--out-dir` вне репозитория.
+- Кандидаты AF (AF-17): день `I4>314 K & I4−I5>17 K`, ночь `I4>290 K & I4−I5>5 K` — запас ≥ 5 K от минимума огня train. Sanity на реальном тесте — `reports/af_test_sanity.md` (дневные сцены теста теплее train).
+- Реальный тест: `meta.csv` один, в корне `data/test/` (колонка `kind`), а не `af/meta.csv` + `bs/meta.csv` — `firemon.io.read_meta` его не находит (учесть в задаче 05).
 
 ## 9. Формат отчёта о выполненной задаче
 

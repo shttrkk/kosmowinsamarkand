@@ -124,3 +124,17 @@ def test_predictor_deterministic(train_dir):
     p1 = AFPredictor({"num_threads": 2}).load().predict_proba(chip)
     p2 = AFPredictor({"num_threads": 2}).load().predict_proba(chip)
     assert np.array_equal(p1, p2) and p1.max() > 0.5
+
+
+def test_make_fake_test_does_not_write_to_baseline(train_dir, tmp_path):
+    """Шаблон по train кладётся в --out-dir; baseline/ (каталог организаторов) скрипт не трогает."""
+    import subprocess
+    import sys
+
+    fake = REPO_ROOT / "baseline" / "sample_submission_FAKE.csv"
+    before = fake.stat().st_mtime_ns if fake.exists() else None
+    out = tmp_path / "fake"
+    subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "make_fake_test.py"), "--train-dir", str(train_dir),
+                    "--out-dir", str(out), "--n-af", "5", "--n-bs", "5"], check=True, capture_output=True)
+    assert (out / "sample_submission.csv").exists() and (out / "sample_submission_FAKE.csv").exists()
+    assert (fake.stat().st_mtime_ns if fake.exists() else None) == before
