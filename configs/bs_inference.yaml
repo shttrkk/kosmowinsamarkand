@@ -6,8 +6,10 @@ bs:
   use_unet: true
   use_stack: true           # LGBM 2-го уровня на «воротах» UNet (основной режим)
   use_lgbm: false           # пиксельный LGBM 1-го уровня в среднем с UNet (вариант «ансамбль», в финале не нужен)
-  tta: true                 # 4 отражения на GPU
-  tta_cpu: false            # на CPU TTA выключен (время)
+  tta: false                # TTA (4 отражения) выключен на всех устройствах: прирост < 0.005 BS-части (reports/bs_module.md §4.7),
+  tta_cpu: false            # а результат не должен зависеть от устройства. Режим с TTA: tta/tta_cpu: true +
+                            # stack_weights: weights/bs_stack_tta.txt + decode_file: weights/bs_decode_tta.json
+  gpu_half: false           # fp32 (без TF32) на GPU: submission побайтно совпадает с CPU; true — fp16, ~6 px/чип отличий
   batch_size: 8
   num_threads: 8
   unet_weights:

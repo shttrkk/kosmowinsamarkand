@@ -15,11 +15,11 @@ import json
 import numpy as np
 
 from ...utils import REPO_ROOT, get_logger
-from .common import decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
+from .common import cache_dir, weights_dir, decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
 from .postprocess import postprocess_bs
 
 log = get_logger("bs.ensemble")
-OOF = REPO_ROOT / "data" / "cache" / "bs_oof"
+OOF = cache_dir() / "bs_oof"
 
 POST_STEPS = [("scl_post_zero", True), ("scl_zero", True), ("water_lc_zero", True), ("builtup_zero", True),
               ("cloud_policy", "fill"), ("cloud_policy", "zero"),  # (а) «как есть» — текущее состояние
@@ -55,7 +55,7 @@ def evaluate_variant(pa: dict, pb: dict | None, w_a: float, gts, splits, chips=N
         preds = {}
         for j, i in enumerate(val_idx):
             m = decode_probs(pv[j], dec["t_burn"], dec["w"])
-            preds[i] = postprocess_bs(m, chips[i], post, probs=pv[j]) if post else m
+            preds[i] = postprocess_bs(m, chips[i], post, probs=pv[j], decode=dec) if post else m
         out[split] = evaluate_masks(preds, {i: gts[i] for i in val_idx})
         out[f"decode_{split}"] = dec
         if split == "group" and chips is not None:
@@ -142,8 +142,9 @@ def main(argv: list[str] | None = None) -> dict:
     (OOF / name).write_text(json.dumps(res, indent=1, default=float), encoding="utf-8")
     if not args.no_write:
         dec = {"decode": {"t_burn": cur["decode_group"]["t_burn"], "w": cur["decode_group"]["w"]},
-               "postprocess": post, "ens_weights": {"unet": best_w, "lgbm": round(1.0 - best_w, 3)}}
-        (REPO_ROOT / "weights" / "bs_decode.json").write_text(json.dumps(dec, indent=1), encoding="utf-8")
+               # nonempty_min_px — структурный приор набора (в каждом BS-чипе есть пожар), по OOF не подбирается
+               "postprocess": {**post, "nonempty_min_px": 25}, "ens_weights": {"unet": best_w, "lgbm": round(1.0 - best_w, 3)}}
+        (weights_dir() / "bs_decode.json").write_text(json.dumps(dec, indent=1), encoding="utf-8")
     log.info("→ %s | decode %s | post %s", name, res["final_decode"], post)
     return res
 

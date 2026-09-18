@@ -25,6 +25,8 @@ def main() -> int:
     ap.add_argument("--rebuild-cache", action="store_true", help="пересчитать кэш признаков")
     ap.add_argument("--bs-stages", nargs="*", default=None,
                     help="этапы BS: rules lgbm unet stack ensemble (по умолчанию все)")
+    ap.add_argument("--weights-dir", default="weights",
+                    help="BS: куда писать веса (для другого каталога кэш и итоги тоже отдельные — проверка воспроизводимости)")
     args = ap.parse_args()
     if args.module in ("af", "all"):
         from firemon.models.af.pipeline import train_af
@@ -35,7 +37,7 @@ def main() -> int:
     if args.module in ("bs", "all"):
         from firemon.models.bs.pipeline import run as run_bs
 
-        run_bs(args.data_dir or str(ROOT / "data" / "train"), args.bs_stages)
+        run_bs(args.data_dir or str(ROOT / "data" / "train"), args.bs_stages, args.weights_dir)
     return 0
 
 

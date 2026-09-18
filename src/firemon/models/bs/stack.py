@@ -22,11 +22,11 @@ import numpy as np
 
 from ...features.bs_features import FEATURE_GROUPS, _box_mean, _gauss, compute_bs_features, feature_names
 from ...utils import REPO_ROOT, get_logger, seed_everything
-from .common import decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
+from .common import cache_dir, weights_dir, decode_probs, evaluate_masks, fit_decode, fmt, get_splits, load_chips
 from .lgbm import PARAMS, fit
 
 log = get_logger("bs.stack")
-OOF = REPO_ROOT / "data" / "cache" / "bs_oof"
+OOF = cache_dir() / "bs_oof"
 GATE = 0.03
 STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel"]
 UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5",
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None):
     pu = {s: np.load(OOF / f"{args.unet}_{s}{args.unet_suffix}.npy", mmap_mode="r") for s in ("group", "temporal")}
     if args.stage == "cv":
         return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet, args.drop_feats)
-    train_full(chips, pu["group"], args.rounds, args.frac, REPO_ROOT / "weights" / "bs_stack.txt")
+    train_full(chips, pu["group"], args.rounds, args.frac, weights_dir() / "bs_stack.txt")
     return None
 
 

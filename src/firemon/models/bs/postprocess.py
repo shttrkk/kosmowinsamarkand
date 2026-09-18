@@ -143,10 +143,31 @@ def median_labels(mask: np.ndarray, size: int = 3) -> np.ndarray:
     return np.where(burn, sm, 0).astype(np.uint8)
 
 
-def postprocess_bs(mask: np.ndarray, chip: dict, cfg: dict | None, probs: np.ndarray | None = None) -> np.ndarray:
+def nonempty_prior(out: np.ndarray, probs: np.ndarray, forbid: np.ndarray, decode: dict | None,
+                   min_px: int) -> np.ndarray:
+    """Приор «событие есть в каждом чипе»: BS-чип по построению набора нарезан вокруг пожара (в train нет чипов без
+    гари, минимум ≈ 27 px). Срабатывает ТОЛЬКО если после всей постобработки гари < min_px: берётся крупнейшая
+    8-связная компонента p_burn > t_burn/2, если она ≥ min_px; степень — обычное декодирование (argmax p[1:]·w)."""
+    if int(np.count_nonzero(out)) >= min_px:
+        return out
+    decode = decode or {}
+    t = float(decode.get("t_burn") or 0.5) / 2.0
+    p = np.asarray(probs, np.float32)
+    lab, n, sizes = _components(((1.0 - p[0]) > t) & ~forbid)
+    if n == 0 or sizes.max() < min_px:
+        return out
+    comp = lab == int(sizes.argmax())
+    w = np.asarray(decode.get("w") or (1.0, 1.0, 1.0), np.float32).reshape(3, 1, 1)
+    cls = (p[1:] * w).argmax(axis=0).astype(np.uint8) + 1
+    return np.where(comp, cls, 0).astype(np.uint8)
+
+
+def postprocess_bs(mask: np.ndarray, chip: dict, cfg: dict | None, probs: np.ndarray | None = None,
+                   decode: dict | None = None) -> np.ndarray:
     """cfg: scl_zero, scl_post_zero, water_lc_zero, builtup_zero (bool), cloud_policy, event_keep_r / event_zero_r
     (px, нужны вероятности `probs` (4,H,W)), largest_keep_r / rel_area_pct / largest_circle_r (компоненты
-    относительно крупнейшей), min_component_px, fill_holes_px, median_size."""
+    относительно крупнейшей), min_component_px, fill_holes_px, median_size, nonempty_min_px (приор «событие есть
+    в каждом чипе», нужны `probs` и `decode` = {t_burn, w})."""
     cfg = cfg or {}
     out = mask.astype(np.uint8, copy=True)
     forbid = np.zeros(out.shape, bool)
@@ -183,4 +204,6 @@ def postprocess_bs(mask: np.ndarray, chip: dict, cfg: dict | None, probs: np.nda
     out = remove_small(out, int(cfg.get("min_component_px", 0)))
     out = fill_holes(out, int(cfg.get("fill_holes_px", 0)), forbid)
     out = median_labels(out, int(cfg.get("median_size", 0)))
+    if probs is not None and cfg.get("nonempty_min_px"):
+        out = nonempty_prior(out, probs, forbid, decode, int(cfg["nonempty_min_px"]))
     return out

@@ -22,11 +22,11 @@ import torch.nn.functional as F
 from ...features.bs_features import (CHANNEL_SETS, UNET_CHANNELS, compute_bs_features, feature_names, groups_for,
                                      select_channels)
 from ...utils import REPO_ROOT, get_logger, seed_everything
-from .common import evaluate_masks, fmt, get_splits, load_chips
+from .common import cache_dir, weights_dir, evaluate_masks, fmt, get_splits, load_chips
 
 log = get_logger("bs.unet")
 _BINARY_PREFIX = ("scl_", "lc_", "invalid", "sar_nodata")
-CACHE = REPO_ROOT / "data" / "cache" / "bs_oof"
+CACHE = cache_dir() / "bs_oof"
 
 
 def unet_inputs(chip: dict, channels: list[str] | None = None) -> np.ndarray:
@@ -247,7 +247,8 @@ def main(argv: list[str] | None = None) -> dict:
     args = ap.parse_args(argv)
 
     CACHE.mkdir(parents=True, exist_ok=True)
-    weights = REPO_ROOT / "weights"
+    weights = weights_dir()
+    weights.mkdir(parents=True, exist_ok=True)
     ids, x, y, norm = prepare_tensors(args.data_dir, weights / f"bs_norm_{args.tag}.json" if args.split == "full" else None,
                                       CHANNEL_SETS[args.channels])
     result: dict = {"tag": args.tag, "split": args.split, "args": vars(args)}
