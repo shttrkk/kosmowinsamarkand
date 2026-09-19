@@ -2,6 +2,10 @@
 
     python scripts/bs_report_figures.py --probs stack_r34_cedice --ensemble ensemble_r34_cedice_main_r34_cedice.json
 
+Финальная модель v5 (многомасштабный ансамбль, без TTA; OOF стека — этап `ms_stack` обучения, пороги и постобработка — поставляемые):
+
+    python scripts/bs_report_figures.py --oof-dir data/cache/bs_weights_ms_check/bs_oof --probs stack_ms         --decode-file weights/bs_decode_ms.json --curve-tags r34_cedice r34_v4 s075_v4 half_v4         --curve-dirs data/cache/bs_weights_night_3/bs_oof
+
 Выход: reports/figures/bs_*.png и reports/bs_report_stats.json (матрица ошибок, IoU по чипам и т.п.).
 """
 from __future__ import annotations
@@ -42,12 +46,13 @@ def chip_iou(pred: np.ndarray, gt: np.ndarray) -> float:
     return 1.0 if u == 0 else np.count_nonzero((pred > 0) & (gt > 0)) / u
 
 
-def curves(tags: list[str]) -> None:
+def curves(tags: list[str], extra_dirs: list[Path] | None = None) -> None:
+    """Кривые обучения UNet по тегам; json с историей ищется в data/cache/bs_oof, затем в extra_dirs (сети других масштабов)."""
     fig, ax = plt.subplots(1, 3, figsize=(15, 4))
     for tag in tags:
         for split in ("group", "temporal"):
-            p = OOF / f"{tag}_{split}.json"
-            if not p.exists():
+            p = next((d / f"{tag}_{split}.json" for d in [OOF, *(extra_dirs or [])] if (d / f"{tag}_{split}.json").exists()), None)
+            if p is None:
                 continue
             for k, hist in enumerate(json.loads(p.read_text(encoding="utf-8"))["history"]):
                 ep = [h["epoch"] for h in hist]
@@ -69,20 +74,29 @@ def main() -> None:
     ap.add_argument("--probs", default="stack_r34_cedice")
     ap.add_argument("--ensemble", default="ensemble_r34_cedice_main_r34_cedice.json")
     ap.add_argument("--curve-tags", nargs="*", default=["r34_cedice"])
+    ap.add_argument("--curve-dirs", nargs="*", default=[], help="доп. каталоги с историей обучения (сети 0.75× и 0.5×)")
+    ap.add_argument("--oof-dir", default=None, help="каталог с OOF-вероятностями стека (по умолчанию data/cache/bs_oof)")
+    ap.add_argument("--decode-file", default=None,
+                    help="json с decode/postprocess из weights/ (например weights/bs_decode_ms.json) вместо --ensemble")
     args = ap.parse_args()
     FIG.mkdir(parents=True, exist_ok=True)
-    curves(args.curve_tags)
+    curves(args.curve_tags, [Path(d) for d in args.curve_dirs])
 
-    ens = json.loads((OOF / args.ensemble).read_text(encoding="utf-8"))
-    dec, post = ens["final_decode"], ens["postprocess"]
+    oof = Path(args.oof_dir) if args.oof_dir else OOF
+    if args.decode_file:
+        shipped = json.loads(Path(args.decode_file).read_text(encoding="utf-8"))
+        dec, post = shipped["decode"], shipped["postprocess"]
+    else:
+        ens = json.loads((oof / args.ensemble).read_text(encoding="utf-8"))
+        dec, post = ens["final_decode"], ens["postprocess"]
     chips = load_chips(args.data_dir)
     ids = [c["chip_id"] for c in chips]
-    probs = np.load(OOF / f"{args.probs}_group.npy", mmap_mode="r")
+    probs = np.load(oof / f"{args.probs}_group.npy", mmap_mode="r")
     preds = []
     for i in range(len(ids)):
         p = np.asarray(probs[i], np.float32)
         preds.append(postprocess_bs(decode_probs(p, dec["t_burn"], dec["w"]), chips[i], post, probs=p))
-    stats: dict = {"decode": dec, "postprocess": post}
+    stats: dict = {"decode": dec, "postprocess": post, "probs": str(oof / f"{args.probs}_group.npy")}
 
     # матрица ошибок
     conf = np.zeros((4, 4), np.int64)

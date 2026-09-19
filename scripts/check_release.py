@@ -1,10 +1,10 @@
 """Инвентаризация релиза: всё, на что ссылаются README / HANDOFF / отчёт, лежит в git; размеры файлов; чистота рабочей копии.
 
-    python scripts/check_release.py            # печать + reports/tasklog/release_check.md; код 1, если есть проблемы
+    python scripts/check_release.py            # печать + reports/release_check.md; код 1, если есть проблемы
     python scripts/check_release.py --no-write # только печать (для проверки в чистом клоне)
 
 Проверки: (1) пути из документов существуют в git (или явно относятся к тому, что в git не входит: data/, baseline/,
-out/, submissions/, каталоги весов экспериментов); (2) каждый отслеживаемый файл < 100 МБ (лимит GitHub), предупреждение с 50 МБ;
+out/, submissions/, каталоги весов экспериментов); (2) каждый отслеживаемый файл < 100 МБ (типичный лимит git-хостингов), предупреждение с 50 МБ;
 (3) суммарный размер отслеживаемых файлов и каталога .git; (4) `git status` чистый.
 """
 from __future__ import annotations
@@ -17,14 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = ["README.md", "handoff/HANDOFF.md", "reports/report.md"]
+DOCS = ["README.md", "reports/report.md", "reports/service.md", "reports/bs_module.md", "reports/af_module.md"]
 HARD_LIMIT, SOFT_LIMIT = 100 * 1024 ** 2, 50 * 1024 ** 2
 # то, что по замыслу НЕ в git: данные и файлы организаторов, результаты запусков, веса экспериментов, локальные окружения
 OUTSIDE_GIT = ("data/", "baseline/", "out/", "submissions/", "weights_", ".venv", "service/data/firemon.gpkg", "service/data/cache",
                "eda/cache", "C:", "/path/", "path/to")
 EXTENSIONS = (".py", ".md", ".txt", ".yaml", ".yml", ".json", ".csv", ".pdf", ".pptx", ".png", ".pt", ".gz", ".toml", ".js", ".html",
               ".css", ".zip", ".gpkg", ".gpu", ".lock")
-TOP_LEVEL = ("configs/", "src/", "scripts/", "service/", "tests/", "weights/", "reports/", "presentation/", "handoff/", "docs/", "eda/")
+TOP_LEVEL = ("configs/", "src/", "scripts/", "service/", "tests/", "weights/", "reports/", "eda/", "submissions/")
 
 
 def git(*args: str) -> str:
@@ -54,7 +54,7 @@ def resolve(tok: str, doc: Path, tracked: set[str], tracked_dirs: set[str]) -> s
     if tok.startswith(OUTSIDE_GIT) or any(f"/{p}" in f"/{tok}" for p in ("weights_night", "weights_repro", "weights_lovasz")):
         return "outside"
     bases = ["", doc.parent.relative_to(ROOT).as_posix() + "/", "src/firemon/", "src/", "reports/", "reports/figures/", "scripts/",
-             "service/", "presentation/", "tests/", "configs/"]
+             "service/", "tests/", "configs/"]
     for base in bases:
         p = (base + tok).replace("//", "/").lstrip("./")
         parts = []
@@ -71,7 +71,7 @@ def resolve(tok: str, doc: Path, tracked: set[str], tracked_dirs: set[str]) -> s
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--no-write", action="store_true", help="не писать reports/tasklog/release_check.md")
+    ap.add_argument("--no-write", action="store_true", help="не писать reports/release_check.md")
     args = ap.parse_args()
 
     tracked = set(git("ls-files", "-z").split("\0")) - {""}
@@ -108,7 +108,7 @@ def main() -> int:
                 "weights/af_lgbm_meta.json", "weights/bs_unet_r34_cedice.pt", "weights/bs_unet_r34_v4.pt",
                 "weights/bs_unet_r34_v4_s075.pt", "weights/bs_unet_r34_v4_s050.pt", "weights/bs_stack_ms.txt",
                 "weights/bs_decode_ms.json", "weights/bs_lc_medians.json", "service/data/manifest.json",
-                "reports/report.md", "reports/report.pdf", "presentation/deck.pptx", "presentation/deck.pdf",
+                "reports/report.md", "reports/final_numbers.md", "README.md", "LICENSE", "submissions/submission_v5_final.csv",
                 "tests/fixtures/example_submission.csv", "tests/fixtures/sample_submission.csv"]
     required += [f"weights/af_lgbm_fold{i}.txt" for i in range(5)]
     absent = [f for f in required if f not in tracked]
@@ -127,7 +127,7 @@ def main() -> int:
     over_hard = [(s, f) for s, f in sizes if s >= HARD_LIMIT]
     over_soft = [(s, f) for s, f in sizes if SOFT_LIMIT <= s < HARD_LIMIT]
     lines += ["## 3. Размеры", "", f"- отслеживаемых файлов: **{len(sizes)}**, суммарно **{total / 1024 ** 2:.1f} МиБ**;",
-              f"- файлов ≥ 100 МБ (жёсткий лимит GitHub): **{len(over_hard)}**; файлов 50–100 МБ (GitHub предупреждает при push): {len(over_soft)};",
+              f"- файлов ≥ 100 МБ (жёсткий лимит git-хостингов): **{len(over_hard)}**; файлов 50–100 МБ (хостинги предупреждают при push): {len(over_soft)};",
               f"- самый большой файл: `{sizes[-1][1]}` — {sizes[-1][0] / 1024 ** 2:.1f} МиБ.", "",
               "| Файл | МиБ |", "|---|---|"] + [f"| `{f}` | {s / 1024 ** 2:.1f} |" for s, f in reversed(sizes[-10:])] + [""]
     if over_hard:
@@ -141,9 +141,19 @@ def main() -> int:
         gsize = sum(p.stat().st_size for p in git_dir.rglob("*") if p.is_file())
         lines += [f"Каталог `.git`: **{gsize / 1024 ** 2:.1f} МиБ** (после `git gc`).", ""]
 
+    # каталоги, вынесенные из репозитория в пакет артефактов, не должны вернуться
+    banned = sorted({f.split("/")[0] for f in tracked if f.split("/")[0] in ("presentation", "handoff", "prompts", "docs", "artifacts")}
+                    | {"reports/tasklog" for f in tracked if f.startswith("reports/tasklog/")}
+                    | {f for f in tracked if f.lower().endswith((".pdf", ".pptx", ".rar")) or (f.lower().endswith(".zip"))})
+    lines += ["## 3a. Состав: репозиторий = код + документация к коду", "",
+              "Презентация, пакет защиты, журналы задач, ТЗ организаторов, PDF — вне git (пакет артефактов): "
+              + ("**в git их нет**." if not banned else "**НАЙДЕНЫ в git:** " + ", ".join(f"`{b}`" for b in banned)), ""]
+    if banned:
+        problems.append(f"в git есть то, что должно лежать вне репозитория: {banned}")
+
     # 3. чистота
     status = git("status", "--porcelain").strip()
-    own = "reports/tasklog/release_check.md"
+    own = "reports/release_check.md"
     dirty = [ln for ln in status.splitlines() if not ln.endswith(own)]
     lines += ["## 4. Рабочая копия", "", "`git status` — **чисто**." if not dirty else "`git status` — есть изменения:", ""]
     if dirty:
@@ -152,9 +162,9 @@ def main() -> int:
     tags = git("tag", "--points-at", "HEAD").split()
     lines += [f"Теги на HEAD: {', '.join('`' + t + '`' for t in tags) or '—'}.", ""]
 
-    lines += ["## 5. Как выложить (удалённого репозитория пока нет)", "", "```", "git remote add origin <url>",
+    lines += ["## 5. Как выложить (удалённый репозиторий не настроен — площадка выбирается вручную)", "", "```", "git remote add origin <url>",
               "git push -u origin main --tags", "```", "",
-              f"Все {len(sizes)} файлов меньше 100 МБ — Git LFS не нужен. Файлы 50–100 МБ GitHub принимает с предупреждением; "
+              f"Все {len(sizes)} файлов меньше 100 МБ — Git LFS не нужен. Файлы 50–100 МБ хостинги обычно принимают с предупреждением; "
               f"у нас таких {len(over_soft)} (веса UNet по 47 МиБ = 49.3 МБ — ниже и этого порога). После push проверить на сайте, что "
               "четыре `weights/*.pt` открываются как бинарные файлы по ~47 МБ, а не как указатели LFS.", "",
               "## Итог", "", "**Проблем нет.**" if not problems else "**Проблемы:**", ""] + [f"- {p}" for p in problems]
@@ -162,7 +172,7 @@ def main() -> int:
     report = "\n".join(lines).rstrip() + "\n"
     print(report)
     if not args.no_write:
-        out = ROOT / "reports" / "tasklog" / "release_check.md"
+        out = ROOT / "reports" / "release_check.md"
         out.write_text(report, encoding="utf-8", newline="\n")
     return 1 if problems else 0
 

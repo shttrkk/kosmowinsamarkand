@@ -12,8 +12,6 @@
 *.tiff
 *.tar
 *.zip
-# заранее выгруженные демо-запросом файлы для защиты (Shapefile в zip)
-!handoff/demo_exports/*.zip
 service/data/*.gpkg
 service/data/cache/
 
@@ -57,3 +55,20 @@ eda/cache/
 /weights_lovasz_pure/
 /weights_night_*/
 /weights_ms_check/
+
+# репозиторий = код + документация к коду; презентация, пакет защиты, журналы задач, ТЗ организаторов и PDF
+# живут в отдельном пакете артефактов (вне git) — чтобы случайно не вернулись:
+/presentation/
+/handoff/
+/prompts/
+/docs/
+/artifacts/
+/reports/tasklog/
+*.pdf
+*.pptx
+*.rar
+*.mp4
+*.webm
+
+# вырезки примеров BS нужны только слайдам (пакет артефактов); строит scripts/make_report_figures.py
+reports/figures/bs_case_*.png

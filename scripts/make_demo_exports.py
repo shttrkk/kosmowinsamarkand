@@ -1,4 +1,4 @@
-"""Выгрузки демо-запроса сервиса в handoff/demo_exports/ — «план В» для защиты, если сервис не поднялся.
+"""Выгрузки демо-запроса сервиса в out/demo_exports/ (GeoJSON, Shapefile, справка) — готовые файлы на случай, если сервис нельзя поднять.
 
     python scripts/make_demo_exports.py
 
@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from service.app import app  # noqa: E402
 
-OUT = ROOT / "handoff" / "demo_exports"
+OUT = ROOT / "out" / "demo_exports"  # каталог out/ в git не входит; готовый набор — в пакете артефактов
 DEMO = {"bbox": [39.25, 47.95, 39.50, 48.10], "date_from": "2024-09-15", "date_to": "2024-10-10"}
 EXPORTS = [("burn_scars", "geojson", "burn_scars.geojson"), ("burn_scars", "shp", "burn_scars_shp.zip"),
            ("hotspots", "geojson", "hotspots.geojson"), ("hotspots", "shp", "hotspots_shp.zip"),

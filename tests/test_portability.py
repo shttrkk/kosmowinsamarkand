@@ -1,4 +1,4 @@
-"""Готовность к чужой машине (Linux + H100, reports/tasklog/h100_readiness.md): потоки, откат с CUDA, ASCII-консоль, сеть."""
+"""Готовность к чужой машине (Linux + H100; аудит — reports/speed.md): потоки, откат с CUDA, ASCII-консоль, сеть."""
 from __future__ import annotations
 
 import io

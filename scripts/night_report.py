@@ -1,4 +1,4 @@
-"""Сводный отчёт ночного режима: reports/bs_night.json → reports/tasklog/04_bs_night.md (таблица гипотез)."""
+"""Сводный отчёт ночного режима: reports/bs_night.json → out/04_bs_night.md (таблица гипотез)."""
 from __future__ import annotations
 
 import json
@@ -37,7 +37,7 @@ def main(extra_path: str | None = None) -> None:
 |---|---|---|---|---|---|---|---|---|---|
 """
     out = head + "\n".join(rows) + "\n\n" + extra
-    (ROOT / "reports" / "tasklog" / "04_bs_night.md").write_text(out, encoding="utf-8", newline="\n")
+    (ROOT / "out" / "04_bs_night.md").write_text(out, encoding="utf-8", newline="\n")
     print(f"гипотез {len(data)}, принято {n_acc}")
 
 
