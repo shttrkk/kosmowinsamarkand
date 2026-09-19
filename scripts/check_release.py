@@ -154,11 +154,16 @@ def main() -> int:
     # 3. чистота
     status = git("status", "--porcelain").strip()
     own = "reports/release_check.md"
-    dirty = [ln for ln in status.splitlines() if not ln.endswith(own)]
+    entries = [ln for ln in status.splitlines() if not ln.endswith(own)]
+    untracked = [ln for ln in entries if ln.startswith("??")]  # в релиз (git archive / push) не попадают → замечание, не проблема
+    dirty = [ln for ln in entries if not ln.startswith("??")]
     lines += ["## 4. Рабочая копия", "", "`git status` — **чисто**." if not dirty else "`git status` — есть изменения:", ""]
     if dirty:
         problems.append(f"git status не чистый ({len(dirty)} записей)")
         lines += ["```"] + dirty[:40] + ["```", ""]
+    if untracked:
+        lines += [f"Неотслеживаемые файлы в рабочей копии ({len(untracked)}) — в релиз не входят (незавершённая работа других сессий):", "",
+                  "```"] + untracked[:20] + ["```", ""]
     tags = git("tag", "--points-at", "HEAD").split()
     lines += [f"Теги на HEAD: {', '.join('`' + t + '`' for t in tags) or '—'}.", ""]
 
