@@ -29,7 +29,7 @@ log = get_logger("bs.stack")
 OOF = cache_dir() / "bs_oof"
 GATE = 0.03
 GATE_RULE = [False]  # эксперимент: ворота = p_burn > gate ИЛИ пиксельное правило эталона даёт гарь (rule_sev > 0)
-OPTIONAL_GROUPS = ("med2",)  # подключаются только флагом --extra-groups (эксперименты), в финальной модели их нет
+OPTIONAL_GROUPS = ("med2", "scene")  # подключаются только флагом --extra-groups (эксперименты), в финальной модели их нет
 STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel" and g not in OPTIONAL_GROUPS]
 UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5",
               "unet_pburn_g20", "unet_pburn_g40", "dist_event"]

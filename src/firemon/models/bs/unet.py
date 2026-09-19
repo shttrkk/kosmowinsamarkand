@@ -155,6 +155,7 @@ def train_one(x: torch.Tensor, y: torch.Tensor, tr: np.ndarray, va: np.ndarray, 
     gen = torch.Generator().manual_seed(args.seed)
     rng = np.random.RandomState(args.seed)
     hist = []
+    swa_sum, swa_n = None, 0
     for ep in range(args.epochs):
         model.train()
         t0, tot = time.time(), 0.0
@@ -182,9 +183,38 @@ def train_one(x: torch.Tensor, y: torch.Tensor, tr: np.ndarray, va: np.ndarray, 
                                {i: y[i].numpy() for i in va})
             rec.update(iou_burn=m["iou_burn"], miou_sev=m["miou_sev"])
         hist.append(rec)
+        k_swa = int(getattr(args, "swa_last", 0) or 0)
+        if k_swa and ep >= args.epochs - k_swa:  # идея (d): усреднение весов последних K эпох (SWA)
+            sd = {k: v.detach().clone().float() for k, v in model.state_dict().items() if v.is_floating_point()}
+            if swa_sum is None:
+                swa_sum, swa_n = sd, 1
+            else:
+                for k in swa_sum:
+                    swa_sum[k] += sd[k]
+                swa_n += 1
         log.info("%s ep %d/%d loss %.4f %s (%.0f с)", name, ep + 1, args.epochs, rec["loss"],
                  f"val IoU_burn {rec['iou_burn']:.4f} mIoU_sev {rec['miou_sev']:.4f}" if "iou_burn" in rec else "",
                  rec["sec"])
+    if swa_sum is not None:
+        state = model.state_dict()
+        for k, v in swa_sum.items():
+            state[k] = (v / swa_n).to(state[k].dtype)
+        model.load_state_dict(state)
+        # статистики BatchNorm под усреднённые веса: один проход по train без градиентов (порядок фиксирован)
+        import torch.nn as nn
+
+        bns = [m for m in model.modules() if isinstance(m, nn.modules.batchnorm._BatchNorm)]
+        for m in bns:
+            m.reset_running_stats()
+            m.momentum = None
+        model.train()
+        with torch.no_grad():
+            for i in range(0, len(tr), args.batch):
+                b = tr[i:i + args.batch]
+                if len(b) >= 2:
+                    with torch.autocast(dev.type, enabled=dev.type == "cuda"):
+                        model(nz(x[b].to(dev)))
+        log.info("%s: SWA по последним %d эпохам, BN пересчитан", name, swa_n)
     vp = vpt = None
     if len(va):
         vp = _predict_set(model, x, va, dev, nz, args.loss, tta=False)
@@ -286,6 +316,7 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--val-every", type=int, default=5)
     ap.add_argument("--class-weights", type=float, nargs=4, default=[0.5, 1.0, 1.0, 1.2])
     ap.add_argument("--channels", default="v1", choices=sorted(CHANNEL_SETS))
+    ap.add_argument("--swa-last", type=int, default=0, help="усреднить веса последних K эпох (SWA), 0 — выкл.")
     ap.add_argument("--target", default="burn4", choices=["burn4", "zone"], help="zone — бинарная «зона события»")
     ap.add_argument("--zone-radius", type=int, default=10)
     ap.add_argument("--folds", type=int, nargs="*", default=None, help="только эти фолды (отладка)")

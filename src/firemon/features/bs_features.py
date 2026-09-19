@@ -51,6 +51,8 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     "geom": ["dist_center", "coord_x", "coord_y"],
     # H4 (ночные эксперименты): медианы 3×3 прочих разностных индексов; в финальные модели НЕ входят (опция стека)
     "med2": ["dMIRBI_med3", "dNBR2_med3", "RBR_med3"],
+    # нормировка по сцене (EDA B8: фенологический сдвиг фона dNBR ±0.05) — тоже только опция стека
+    "scene": ["dNBR_chip_med", "dNBR_chip_iqr", "dNBR_rel_scene", "dNBR_z_scene", "rule_frac_chip", "strong_frac_chip"],
     "event": ["dist_strong_cc", "dist_strong_centroid", "dist_dnbr_centroid", "cc_rank", "cc_area_rel",
               "cc_area_log"],
 }
@@ -304,6 +306,20 @@ def compute_bs_features(chip: dict, lc_medians: dict[int, float] | None = None,
         f["dMIRBI_med3"] = _median(ipost["MIRBI"] - ipre["MIRBI"], 3)
         f["dNBR2_med3"] = _median(ipre["NBR2"] - ipost["NBR2"], 3)
         f["RBR_med3"] = _median(dnbr / (ipre["NBR"] + 1.001), 3)
+    if "scene" in want:
+        ok = ~invalid
+        vals = dnbr[ok] if ok.any() else dnbr.ravel()
+        q25, q50, q75 = np.percentile(vals, [25, 50, 75])
+        iqr = max(float(q75 - q25), 0.01)
+        ones = np.ones_like(dnbr)
+        med3 = _median(dnbr, 3)
+        rs = rule_severity(med3, lc, scl_pre, scl_post)
+        f["dNBR_chip_med"] = ones * np.float32(q50)
+        f["dNBR_chip_iqr"] = ones * np.float32(iqr)
+        f["dNBR_rel_scene"] = med3 - np.float32(q50)
+        f["dNBR_z_scene"] = (med3 - np.float32(q50)) / np.float32(iqr)
+        f["rule_frac_chip"] = ones * np.float32((rs > 0).mean())
+        f["strong_frac_chip"] = ones * np.float32((rs >= 2).mean())
     if "geom" in want:
         # эталон обрезан буфером события (~4 км); буфер не центрирован по чипу, но слабый радиальный приор есть
         h, w = dnbr.shape
