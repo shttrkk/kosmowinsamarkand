@@ -1,2 +1,4 @@
 * text=auto eol=lf
 *.pdf binary
+# фикстуры тестов — файлы организаторов байт-в-байт (CRLF): без нормализации переводов строк
+tests/fixtures/*.csv -text

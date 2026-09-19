@@ -16,7 +16,7 @@ FAKE_TEST_DIR = ROOT / "data" / "test_fake"
 @pytest.fixture(scope="session")
 def train_dir() -> Path:
     if not (TRAIN_DIR / "af" / "meta.csv").exists():
-        pytest.skip("нет data/train — см. README, раздел «Подготовка данных»")
+        pytest.skip("нет data/train — данные выдают организаторы, распаковка — README, раздел 5 «Структура входных данных»")
     return TRAIN_DIR
 
 
@@ -31,5 +31,5 @@ def fake_test_dir() -> Path:
 def test_dir() -> Path:
     """Реальный тест организаторов: общий meta.csv и sample_submission.csv в корне."""
     if not (TEST_DIR / "meta.csv").exists() or not (TEST_DIR / "sample_submission.csv").exists():
-        pytest.skip("нет data/test — см. README, раздел «Подготовка данных»")
+        pytest.skip("нет data/test — данные выдают организаторы, распаковка — README, раздел 5 «Структура входных данных»")
     return TEST_DIR

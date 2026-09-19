@@ -1,6 +1,7 @@
 """Сверка с примером организаторов `baseline/example_submission.csv`: RLE и текстовый формат файла.
 
-Пример и шаблон лежат в `baseline/` (не в git) — без них тесты пропускаются.
+Копии файлов организаторов лежат в `tests/fixtures/` (в git, байт-в-байт: `.gitattributes` → `-text`), поэтому тесты
+работают и в чистом клоне без `baseline/`; если рядом есть `baseline/`, дополнительно проверяется, что копии не разошлись.
 """
 from __future__ import annotations
 
@@ -14,11 +15,21 @@ from firemon.submission import (DEFAULT_SHAPES, build_submission, chip_kind, rea
                                 validate_submission)
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "baseline" / "example_submission.csv"
-TEMPLATE = ROOT / "baseline" / "sample_submission.csv"
+FIXTURES = ROOT / "tests" / "fixtures"
+EXAMPLE = FIXTURES / "example_submission.csv"
+TEMPLATE = FIXTURES / "sample_submission.csv"
 
 pytestmark = pytest.mark.skipif(not (EXAMPLE.exists() and TEMPLATE.exists()),
-                                reason="нет baseline/example_submission.csv или шаблона")
+                                reason="нет tests/fixtures/example_submission.csv или шаблона")
+
+
+def test_fixtures_match_organizers_files():
+    """Если выданные организаторами файлы лежат в baseline/ — фикстуры обязаны совпадать с ними побайтно."""
+    baseline = ROOT / "baseline"
+    if not (baseline / "example_submission.csv").exists():
+        pytest.skip("нет baseline/ (файлы организаторов в git не входят) — сверять не с чем")
+    assert EXAMPLE.read_bytes() == (baseline / "example_submission.csv").read_bytes()
+    assert TEMPLATE.read_bytes() == (baseline / "sample_submission.csv").read_bytes()
 
 
 @pytest.fixture(scope="module")

@@ -769,16 +769,16 @@ one-hot реализация CE с тем же значением потерь; 
 
 ## 12. Лицензии и источники
 
-- **Данные** предоставлены организаторами; источники открытые: VIIRS (NASA, открытые данные), Sentinel-1/2 (Copernicus,
-  свободная лицензия), ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Подложки карты сервиса — внешние тайлы, которые браузер загружает сам и которые в репозиторий и в
+- **Данные** предоставлены организаторами; источники открытые: VIIRS — общественное достояние (NASA), Sentinel-1/2 и Copernicus DEM GLO-30 — открытая
+  лицензия Copernicus, ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Подложки карты сервиса — внешние тайлы, которые браузер загружает сам и которые в репозиторий и в
   расчёты не входят: Esri World Imagery и World Boundaries and Places (с атрибуцией «Tiles © Esri — Esri, Maxar, Earthstar
-  Geographics, and the GIS User Community») и OpenStreetMap (ODbL); без сети интерфейс работает в режиме «без подложки».
+  Geographics, and the GIS User Community») и OpenStreetMap (ODbL); без сети интерфейс работает в режиме «без подложки». Тайлы Esri — бесплатный, но не открытый сервис: на расчёты, выгрузки и справку подложка не влияет и одной кнопкой заменяется на OSM или «Нет».
 - **Правила соревнования соблюдены:** данные о территориях и датах теста, продукты FIRMS / VNP14 / MCD64A1 / FireCCI и
   ручная разметка теста не используются; геопривязка и даты тестовых чипов не восстанавливаются; модели работают только с
   содержимым чипа и полями тестового `meta.csv`. Геопривязка train использована для групповой валидации, анализа и сервиса.
-- **Предобученные модели:** AF — нет, LightGBM обучен с нуля. BS — энкодер resnet34 с весами ImageNet из torchvision (BSD-3-Clause), подключён через segmentation-models-pytorch 0.5.0 (MIT); веса опубликованы задолго до старта соревнования.
+- **Предобученные модели:** AF — нет, LightGBM обучен с нуля. BS — энкодер resnet34 с весами ImageNet из torchvision: файл `resnet34-333f7ec4.pth` (https://download.pytorch.org/models/resnet34-333f7ec4.pth, `ResNet34_Weights.IMAGENET1K_V1`), репозиторий torchvision https://github.com/pytorch/vision (BSD-3-Clause); подключён через segmentation-models-pytorch 0.5.0 (https://github.com/qubvel-org/segmentation_models.pytorch, MIT); веса опубликованы задолго до старта соревнования и нужны только при обучении — в `weights/*.pt` лежат уже дообученные сети, на инференсе ничего не скачивается.
 - **ПО** — только открытое: LightGBM (MIT), PyTorch (BSD-3), segmentation-models-pytorch (MIT), NumPy / SciPy / pandas
   (BSD), scikit-learn (BSD-3), rasterio (BSD-3), GeoPandas / Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet
-  (BSD-2), Leaflet.draw (MIT), Swagger UI (Apache-2.0).
+  (BSD-2), Leaflet.draw (MIT), polygon-clipping (MIT), Swagger UI (Apache-2.0).
 
 Команда: SAMARKAND — Кашин Глеб Игоревич, Закон Марк Михайлович, Панин Матвей Евгеньевич, Ожигов Егор Сергеевич, Ведерников Фёдор Яковлевич.

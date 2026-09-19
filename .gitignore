@@ -10,6 +10,8 @@
 *.tiff
 *.tar
 *.zip
+# заранее выгруженные демо-запросом файлы для защиты (Shapefile в zip)
+!handoff/demo_exports/*.zip
 service/data/*.gpkg
 service/data/cache/
 
@@ -24,6 +26,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv_*/
 venv/
 .pytest_cache/
 .ipynb_checkpoints/
@@ -46,7 +49,7 @@ eda/cache/
 # временные lock-файлы MS Office (презентация открыта в PowerPoint)
 ~$*
 
-# ��������� ������ �������� BS (�������� �����������������)
+# каталоги весов экспериментов BS (в git не входят, воспроизводятся train.py --weights-dir)
 /weights_repro/
 /weights_lovasz/
 /weights_lovasz_pure/

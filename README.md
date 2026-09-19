@@ -1,5 +1,47 @@
 # Мониторинг природных пожаров — КосмоХакатон 2026
 
+Команда **SAMARKAND**. Решение кейса: два модуля (активное горение VIIRS, степень поражения Sentinel-2/1), `submission.csv`, сервис, отчёт.
+
+## Быстрый старт: от клона до `submission.csv` за 5 команд
+
+**Linux + GPU** (Python 3.12, драйвер NVIDIA ≥ 550; без GPU — `requirements-cpu.txt`, результат тот же):
+
+```bash
+git clone <repo-url> fire-monitoring && cd fire-monitoring
+python3.12 -m venv .venv && source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python inference.py --data-dir /path/to/test --output /path/to/submission.csv
+```
+
+**Windows** (PowerShell):
+
+```powershell
+git clone <repo-url> fire-monitoring; cd fire-monitoring
+py -3.12 -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python inference.py --data-dir C:\path\to\test --output C:\path\to\submission.csv
+```
+
+Что важно знать до запуска:
+
+- **`/path/to/test`** — распакованный тестовый архив организаторов (`fire-test-renamed.tar` → каталог `test/` с `meta.csv`,
+  `sample_submission.csv`, `af/`, `bs/`; раздел 5). Данные в репозиторий не входят. Каталог **`baseline/` для инференса не нужен**:
+  шаблон строк берётся из `<data-dir>/sample_submission.csv` (или `--sample-submission`).
+- **Веса уже в репозитории** (`weights/`, 205 МБ, раздел 8) — скачивать ничего не нужно, **сеть при инференсе не используется**.
+- **Ожидаемое время** (269 чипов, от старта процесса до провалидированного файла): RTX 4070 — **≈ 23.5 с**; только CPU (i5-13600KF) —
+  **≈ 57 с**; Docker CPU — ≈ 69 с; H100 — оценка ≈ 19–22 с (не проверялось: GPU-часть ≈ 6.5 с из 23.5, остальное — CPU-этапы).
+  Нет GPU или старый драйвер → автоматический переход на CPU, код выхода 0. Быстрый режим v4 (−0.005 Score, ≈ 21 с): `--config configs/inference_bs_base.yaml`.
+- **Результат детерминирован**: GPU, CPU, Docker, любое `--workers` — побайтно один файл (sha256 финального `784fe474…`), формат — как
+  `example_submission.csv` организаторов. Код выхода: 0 — файл записан и прошёл валидацию; 1 — не прошёл; 2 — нет входных данных.
+- Python 3.10 / 3.11 → `pip install -r requirements-py310.txt` (тот же файл на выходе); другой Python или нет желания ставить пакеты → Docker (раздел 7).
+- **Сервис**: `python -m uvicorn service.app:app --port 8000` → http://localhost:8000 (раздел 10). Слой эталона работает сразу после
+  клонирования; для слоя «модель» нужны `data/train` и `python scripts/build_service_data.py --source both`. Подложки «Спутник» (Esri) и
+  «Карта» (OSM) требуют интернета; без него интерфейс сам переходит в офлайн-режим «Нет» (граница территории + охваты сцен), API и `/docs` работают офлайн.
+- Обучение: `python train.py --module af|bs|all` (раздел 9). Тесты: `python -m pytest -q` (раздел 11). Отчёт — `reports/report.pdf`,
+  презентация — `presentation/deck.pdf`, сверка с ТЗ — `reports/tasklog/tz_compliance.md`, проверка релиза — `reports/tasklog/release_check.md`.
+
 ## 1. Кратко о решении
 
 Решение кейса «Мониторинг природных пожаров» из пяти частей:
@@ -359,44 +401,66 @@ curl -X POST http://localhost:8000/api/v1/query -H "Content-Type: application/js
 python -m pytest -q
 ```
 
-Покрыто: I/O и обе раскладки meta, RLE по каждому правилу ТЗ, метрика, сборка/валидация submission, фолды, AF- и BS-модули,
-сервис, устойчивость инференса (NaN/нули/отсутствующие чипы, коды выхода), побайтная воспроизводимость. Тесты, которым нужны
-данные, пропускаются, если нет `data/train`, `data/test` или `data/test_fake` (`python scripts/make_fake_test.py`).
+Покрыто: I/O и обе раскладки meta, RLE по каждому правилу ТЗ и по примеру организаторов, метрика, сборка/валидация submission, фолды,
+AF- и BS-модули, сервис, устойчивость инференса (NaN/нули/отсутствующие чипы, коды выхода), побайтная воспроизводимость, переносимость
+(потоки, откат с CUDA, ASCII-консоль, отсутствие сетевых вызовов).
+
+**Каким тестам нужны данные.** В чистом клоне без `data/` тесты не падают, а пропускаются (`pytest.skip` с пояснением):
+
+| Нужно | Тесты | Без этого |
+|---|---|---|
+| ничего (только репозиторий) | `test_rle*.py`, `test_metrics.py`, `test_submission*.py` (пример организаторов — в `tests/fixtures/`), `test_portability.py`, `test_service.py` (снимок слоёв в git), `test_pipeline.py`, часть `test_bs.py`, `test_splits.py` | — |
+| `data/train` | `test_io.py` (чтение train-чипов), `test_af.py`, большая часть `test_bs.py`, проверки фолдов по meta | skip: «нет data/train» |
+| `data/test` | `test_inference_smoke.py::test_inference_on_real_test`, `test_reproducibility.py`, проверки тестовой раскладки | skip: «нет data/test» |
+| `data/test_fake` (`python scripts/make_fake_test.py`, нужен `data/train`) | сквозной инференс с метрикой на 20 AF + 10 BS чипах | skip: «нет data/test_fake» |
+
+С полными данными — 164 теста, ≈ 3–7 мин; в чистом клоне — см. `reports/tasklog/clone_check.md`.
 На Windows тесты сами передают подпроцессам `PYTHONIOENCODING=utf-8`.
 
-## 12. Структура репозитория
+## 12. Состав репозитория
 
-Размер: ≈ 268 МБ отслеживаемых файлов (из них веса 205 МБ, снимок слоёв сервиса 16 МБ, рисунки отчётов ~15 МБ); данные (`data/`, ≈ 3 ГБ) и `service/data/firemon.gpkg` в git не входят.
+В git — **≈ 268 МБ** (≈ 360 файлов; каждый файл < 50 МБ, лимит GitHub 100 МБ не затронут — `reports/tasklog/release_check.md`,
+проверка: `python scripts/check_release.py`). Данные (`data/`, ≈ 3 ГБ), файлы организаторов (`baseline/`), результаты запусков
+(`out/`, `submissions/*.csv`) и `service/data/firemon.gpkg` (слой «модель» сервиса, 100 МБ, собирается командой) в git не входят.
 
 ```
-inference.py            единственная точка входа инференса (CLI)
+                                                                                                            размер в git
+inference.py            единственная точка входа инференса (CLI)                                                  7 КБ
 train.py                обучение: python train.py --module af|bs|all
-Dockerfile, Dockerfile.gpu, .dockerignore
-requirements.txt (GPU) / requirements-cpu.txt / requirements-base.txt / requirements.lock.txt
-configs/                inference.yaml, af_lgbm.yaml, folds_af.csv, folds_bs.csv (фиксированная валидация)
-src/firemon/
+Dockerfile (CPU, проверен), Dockerfile.gpu (написан, не собран), .dockerignore
+requirements.txt (GPU, Python 3.12) / requirements-cpu.txt / requirements-base.txt / requirements.lock.txt
+requirements-py310.txt / requirements-py310-cpu.txt / requirements-py310-base.txt   страховка для Python 3.10–3.11
+configs/                inference.yaml (v5 по умолчанию), inference_bs_base.yaml (быстрый режим v4), bs_inference.yaml,       < 0.1 МБ
+                        af_lgbm.yaml, folds_af.csv, folds_bs.csv (фиксированная валидация)
+weights/                веса моделей — 4 UNet по 47 МиБ, LightGBM AF ×5, стеки BS, json с порогами (раздел 8)            205 МБ
+src/firemon/                                                                                                       0.2 МБ
   pipeline.py           конвейер инференса: реестры бэкендов AF/BS, потоки, профилировщик — МЕСТО ПОДКЛЮЧЕНИЯ МОДЕЛЕЙ
   io.py                 чтение чипов → dict массивов (C,H,W) + имена каналов, meta (обе раскладки), win_path
   rle.py                RLE encode / decode / validate (формат ТЗ)
   metrics.py            F1_af, IoU_burn, mIoU_sev, Score; evaluate_submission
-  submission.py         сборка и валидация submission.csv по шаблону
+  submission.py         сборка и валидация submission.csv по шаблону (текстовый формат — как пример организаторов)
   splits.py             групповые фолды (тайл / пространственный блок) + временной сплит
-  features/             af_features.py (110 признаков AF)
+  utils.py              seed, логирование, auto_threads (ядра/cgroup), cuda_usable (откат на CPU)
+  features/             af_features.py (110 признаков AF), bs_features.py (признаки BS, пороги правила степени)
   models/af/            predictor.py (AFPredictor), pipeline.py / train_lgbm.py / dataset.py (обучение), rules.py (правила)
-  models/bs/            predictor.py (BSPredictor), infer.py, unet.py / lgbm.py / stack.py / ensemble.py (обучение), postprocess.py, rules.py (baseline dNBR)
-  postprocess.py, utils.py
-scripts/                check_data.py, check_submission.py, make_fake_test.py, build_service_data.py,
-                        make_pipeline_figure.py, bench_inference_parallel.py, af/ (исследования AF)
-service/                FastAPI-приложение, static/ (Leaflet), data/ (снимок слоёв)
-eda/                    eda_af.py, eda_bs.py, test_vs_train.py, tables/
-presentation/           deck.pptx / deck.pdf, build_deck.py (сборщик слайдов), qa.md (вопросы жюри)
-handoff/                HANDOFF.md — пакет для доработки презентации и защиты
-reports/                report.md / report.pdf, final_numbers.md, eda.md, baseline_review.md, af_module.md, service.md, experiments.md, submissions.md, speed.md,
-                        test_vs_train.md, figures/, tasklog/
-tests/                  pytest
-weights/                веса моделей (в git)
-docs/                   ТЗ и критерии (pdf + txt)
-data/, baseline/, out/, submissions/*.csv     не в git
+  models/bs/            predictor.py (BSPredictor), infer.py, unet.py / lgbm.py / stack.py / ensemble.py / pipeline.py (обучение),
+                        postprocess.py, rules.py (baseline dNBR), components.py (проверенная и не принятая гипотеза)
+scripts/                check_data.py, check_submission.py, compare_submissions.py, check_release.py, make_fake_test.py,          0.2 МБ
+                        build_service_data.py, make_demo_exports.py, make_report_figures.py, export_pdf.py, check_placeholders.py;
+                        af/, bs_*.py, af_night_*.py — скрипты экспериментов (часть читает локальные каталоги весов экспериментов
+                        `weights_repro/`, `weights_night_*/` и кэши `data/cache/` — в git их нет, воспроизводятся `train.py --weights-dir …`)
+service/                FastAPI-приложение (app.py, …), static/ (интерфейс + vendor: Leaflet, Leaflet.draw, polygon-clipping,       17 МБ
+                        Swagger UI), data/ — снимок эталонных слоёв *.geojson.gz + manifest.json
+tests/                  pytest, 164 теста; fixtures/ — пример и шаблон submission организаторов (байт-в-байт)                    0.6 МБ
+reports/                report.md / report.pdf, final_numbers.md, eda.md, baseline_review.md, af_module.md, bs_module.md,          30 МБ
+                        service.md, experiments.md, submissions.md, speed.md, test_vs_train.md, figures/ (рисунки, 25 МБ),
+                        tasklog/ (журналы задач: tz_compliance.md, release_check.md, h100_readiness.md, final_check.md, clone_check.md, merge_*.md)
+presentation/           deck.pptx / deck.pdf (12 слайдов), build_deck.py (сборщик слайдов), qa.md (30 вопросов жюри)                  5 МБ
+handoff/                HANDOFF.md — пакет для защиты: сценарий демо, чек-лист, копии PDF; demo_exports/ — выгрузки демо-запроса     6 МБ
+eda/                    eda_af.py, eda_bs.py, test_vs_train.py, tables/ (46 csv)                                                 0.3 МБ
+docs/                   ТЗ и критерии (pdf + txt)                                                                                  2 МБ
+prompts/                постановки задач агентам (история разработки)                                                           0.1 МБ
+data/, baseline/, out/, submissions/*.csv, service/data/firemon.gpkg, .venv/                                                  не в git
 ```
 
 ### Разработка в нескольких worktree
@@ -417,16 +481,21 @@ data/, baseline/, out/, submissions/*.csv     не в git
 
 ## 13. Лицензии данных и моделей
 
-- **Данные** предоставлены организаторами; источники открытые: VIIRS (NASA, открытые данные), Sentinel-1/2 (Copernicus, свободная
-  лицензия), ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Данные о территориях/датах теста, продукты
+- **Данные** предоставлены организаторами; источники открытые: VIIRS — общественное достояние (NASA), Sentinel-1/2 и Copernicus DEM GLO-30 —
+  открытая лицензия Copernicus, ESA WorldCover v200 (CC BY 4.0), ERA5-Land (Copernicus C3S). Данные о территориях/датах теста, продукты
   FIRMS/VNP14/MCD64A1/FireCCI и ручная разметка теста **не используются**; модели работают только с содержимым чипа.
-- **Предобученные модели:** AF — нет (LightGBM обучен с нуля). BS — энкодер resnet34 с весами ImageNet из torchvision
-  (BSD-3-Clause), подключён через segmentation-models-pytorch 0.5.0 (MIT); веса опубликованы задолго до старта.
+- **Предобученные модели:** AF — нет (LightGBM обучен с нуля). BS — энкодер resnet34 с весами ImageNet из torchvision:
+  файл `resnet34-333f7ec4.pth` (https://download.pytorch.org/models/resnet34-333f7ec4.pth, `ResNet34_Weights.IMAGENET1K_V1`), репозиторий torchvision https://github.com/pytorch/vision (BSD-3-Clause);
+  подключён через segmentation-models-pytorch 0.5.0 (https://github.com/qubvel-org/segmentation_models.pytorch, MIT); веса опубликованы задолго до старта
+  и нужны только при обучении (на инференсе ничего не скачивается).
 - **ПО** — только открытое: LightGBM (MIT), PyTorch (BSD-3), segmentation-models-pytorch (MIT), NumPy/SciPy/pandas (BSD),
   rasterio (BSD-3), GeoPandas/Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet (BSD-2), Leaflet.draw (MIT), polygon-clipping (MIT),
   Swagger UI (Apache-2.0); тексты лицензий — в `service/static/vendor/{leaflet,swagger,polygon-clipping}/LICENSE`. Подложки карты сервиса
   (Esri World Imagery с атрибуцией, OpenStreetMap, ODbL) — внешние тайлы, загружаются браузером, в репозиторий не входят; без сети
-  интерфейс сам переходит в режим без подложки.
+  интерфейс сам переходит в режим без подложки. Тайлы Esri — бесплатный, но не открытый сервис: на расчёты подложка не влияет и
+  заменяется на OSM или «Нет» одной кнопкой.
+- **Данные организаторов в репозитории**: снимок эталонных слоёв сервиса `service/data/*.geojson.gz` (производное от train-разметки) и
+  `tests/fixtures/` (шаблон и пример submission) — выданы для участия в соревновании; репозиторий предполагается приватным / для жюри.
 
 ## 14. Команда
 

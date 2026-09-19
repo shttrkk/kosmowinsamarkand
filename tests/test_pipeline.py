@@ -78,14 +78,20 @@ def test_broken_and_missing_chips_give_empty_masks(broken_dir, tmp_path):
 
 @pytest.mark.parametrize("args, fragment", [
     (["--data-dir", "no/such/dir"], "каталог не найден"),
-    (["--data-dir", "{empty}"], "не найдено ни одного чипа"),  # шаблон найдётся в baseline/, чипов нет
+    (["--data-dir", "{empty}", "--sample-submission", "{template}"], "не найдено ни одного чипа"),  # шаблон есть, чипов нет
+    (["--data-dir", "{nothing}"], "нет ни шаблона"),  # ни шаблона, ни чипов (в чистом клоне baseline/ нет — шаблон не подхватится)
     (["--data-dir", "{empty}", "--sample-submission", "no_such.csv"], "файл не найден"),
     (["--data-dir", "{empty}", "--config", "no_such.yaml"], "файл не найден"),
 ])
 def test_missing_inputs_exit_code_and_message(tmp_path, args, fragment):
     empty = tmp_path / "empty"
     empty.mkdir()
-    proc = _run(*[a.replace("{empty}", str(empty)) for a in args], "--output", str(tmp_path / "s.csv"))
+    template = tmp_path / "template.csv"  # явный шаблон: тест не зависит от наличия baseline/ (в git не входит)
+    template.write_text("chip_id,class_id,rle\nAF_te_000001,1,\n", encoding="utf-8")
+    if "{nothing}" in args and (ROOT / "baseline" / "sample_submission.csv").is_file():
+        pytest.skip("рядом лежит baseline/sample_submission.csv — ветка «нет ни шаблона» проверяется только в чистом клоне")
+    subst = {"{empty}": str(empty), "{template}": str(template), "{nothing}": str(empty)}
+    proc = _run(*[subst.get(a, a) for a in args], "--output", str(tmp_path / "s.csv"))
     assert proc.returncode == 2
     assert fragment in proc.stdout and "Traceback" not in proc.stdout + proc.stderr
 
