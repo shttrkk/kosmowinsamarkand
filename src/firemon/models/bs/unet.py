@@ -167,6 +167,10 @@ def train_one(x: torch.Tensor, y: torch.Tensor, tr: np.ndarray, va: np.ndarray, 
             xb = nz(x[b].to(dev, non_blocking=True))
             yb = y[b].to(dev, non_blocking=True).long()
             xb, yb = _augment(xb, yb, gen)
+            sc = float(getattr(args, "scale", 1.0) or 1.0)
+            if sc != 1.0:  # эксперимент: сеть на пониженном разрешении (больше контекст, для выбора события)
+                xb = F.interpolate(xb, scale_factor=sc, mode="bilinear", align_corners=False)
+                yb = F.interpolate(yb[:, None].float(), scale_factor=sc, mode="nearest")[:, 0].long()
             with torch.autocast(dev.type, enabled=dev.type == "cuda"):
                 lo = model(xb)
             loss = loss_fn(lo, yb)
@@ -178,7 +182,7 @@ def train_one(x: torch.Tensor, y: torch.Tensor, tr: np.ndarray, va: np.ndarray, 
             tot += loss.item() * len(b)
         rec = {"epoch": ep + 1, "loss": tot / len(tr), "sec": time.time() - t0}
         if len(va) and ((ep + 1) % args.val_every == 0 or ep + 1 == args.epochs):
-            probs = _predict_set(model, x, va, dev, nz, args.loss, tta=False)
+            probs = _predict_set(model, x, va, dev, nz, args.loss, tta=False, scale=float(getattr(args, "scale", 1.0) or 1.0))
             m = evaluate_masks({i: p.argmax(0).astype(np.uint8) for i, p in zip(va, probs)},
                                {i: y[i].numpy() for i in va})
             rec.update(iou_burn=m["iou_burn"], miou_sev=m["miou_sev"])
@@ -217,18 +221,22 @@ def train_one(x: torch.Tensor, y: torch.Tensor, tr: np.ndarray, va: np.ndarray, 
         log.info("%s: SWA по последним %d эпохам, BN пересчитан", name, swa_n)
     vp = vpt = None
     if len(va):
-        vp = _predict_set(model, x, va, dev, nz, args.loss, tta=False)
-        vpt = _predict_set(model, x, va, dev, nz, args.loss, tta=True)
+        vp = _predict_set(model, x, va, dev, nz, args.loss, tta=False, scale=float(getattr(args, "scale", 1.0) or 1.0))
+        vpt = _predict_set(model, x, va, dev, nz, args.loss, tta=True, scale=float(getattr(args, "scale", 1.0) or 1.0))
     return model, vp, vpt, hist
 
 
-def _predict_set(model, x, idx, dev, nz, loss_name, tta, batch: int = 8) -> np.ndarray:
+def _predict_set(model, x, idx, dev, nz, loss_name, tta, batch: int = 8, scale: float = 1.0) -> np.ndarray:
     model.eval()
     out = []
     for i in range(0, len(idx), batch):
         xb = nz(x[idx[i:i + batch]].to(dev))
         with torch.autocast(dev.type, enabled=dev.type == "cuda"):
+            if scale != 1.0:
+                xb = F.interpolate(xb, scale_factor=scale, mode="bilinear", align_corners=False)
             p = predict_probs(model, xb, loss_name, tta)
+            if scale != 1.0:
+                p = F.interpolate(p, size=x.shape[-2:], mode="bilinear", align_corners=False)
         out.append(p.half().cpu().numpy())
     return np.concatenate(out)
 
@@ -316,6 +324,7 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--val-every", type=int, default=5)
     ap.add_argument("--class-weights", type=float, nargs=4, default=[0.5, 1.0, 1.0, 1.2])
     ap.add_argument("--channels", default="v1", choices=sorted(CHANNEL_SETS))
+    ap.add_argument("--scale", type=float, default=1.0, help="масштаб входа сети (0.5 — половинное разрешение)")
     ap.add_argument("--swa-last", type=int, default=0, help="усреднить веса последних K эпох (SWA), 0 — выкл.")
     ap.add_argument("--target", default="burn4", choices=["burn4", "zone"], help="zone — бинарная «зона события»")
     ap.add_argument("--zone-radius", type=int, default=10)
