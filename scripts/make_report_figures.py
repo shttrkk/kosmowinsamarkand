@@ -1,6 +1,6 @@
 """Рисунки отчёта и презентации, которые строятся из итоговых чисел (reports/final_numbers.md).
 
-    python scripts/make_report_figures.py      # → reports/figures/report_af_contrib.png, report_score_ladder.png
+    python scripts/make_report_figures.py      # → reports/figures/report_af_contrib.png, report_score_ladder.png, report_contrib.png
 
 Числа продублированы здесь намеренно: источник истины — reports/final_numbers.md, при его изменении поправить константы.
 """
@@ -28,15 +28,30 @@ AF_ABLATIONS = [
     ("обучение только на кандидатах", 0.006, 0.006),
     ("дневные признаки блика", 0.000, 0.002),
 ]
-# лестница Score на train/OOF (final_numbers.md, A3, A4, A7 и report.md §6)
+# лестница Score на OOF (final_numbers.md, A3, A4, B1): F1_af·0.35 + BS-часть
 SCORE_LADDER = [
     ("baseline:\nдва правила", 0.3088),
-    ("AF: пороги\nдень/ночь + фон", 0.5374),
-    ("AF: LightGBM\n(отправка №2)", 0.5625),
-    ("BS: пороги\nпо покрову", 0.5858),
-    ("BS: LightGBM\n16 признаков", 0.6574),
+    ("AF: пороги\nдень/ночь", 0.5374),
+    ("AF:\nLightGBM", 0.5625),
+    ("BS: пороги\nпо покрову", 0.5960),
+    ("BS: LightGBM\nпо пикселям", 0.7283),
+    ("BS: UNet →\nстек-LGBM", 0.7909),
+    ("BS: событие,\n2-й UNet", 0.8248),
+    ("BS: пост-\nобработка", 0.8344),
+    ("финал:\nбез TTA", 0.8300),
 ]
-
+# вклад решений в Score на OOF (ΔScore), final_numbers.md B2
+CONTRIB = [
+    ("AF: пороги относительно фона, день/ночь", 0.229),
+    ("BS: LightGBM по пикселям (104 признака) + декодирование", 0.132),
+    ("BS: UNet выбирает регион → стек-LGBM", 0.063),
+    ("BS: пороги степени по покрову", 0.033),
+    ("BS: правило эталона, центр и локализация события", 0.027),
+    ("AF: LightGBM на кандидатах", 0.025),
+    ("BS: постобработка (MMU 25 px, дыры, 300 px от события)", 0.010),
+    ("BS: второй UNet (усреднение)", 0.007),
+    ("BS: отказ от TTA (результат не зависит от устройства)", -0.004),
+]
 
 def _style(ax):
     ax.set_facecolor(SURFACE)
@@ -71,22 +86,22 @@ def af_contrib() -> Path:
 
 
 def score_ladder() -> Path:
-    fig, ax = plt.subplots(figsize=(9.2, 4.2), dpi=170, facecolor=SURFACE)
+    fig, ax = plt.subplots(figsize=(12.0, 4.4), dpi=170, facecolor=SURFACE)
     _style(ax)
     names = [s[0] for s in SCORE_LADDER]
     vals = [s[1] for s in SCORE_LADDER]
     bars = ax.bar(names, vals, width=0.56, color=SERIES, linewidth=0)
     prev = None
     for bar, v in zip(bars, vals):
-        label = f"{v:.4f}" if prev is None else f"{v:.4f}\n+{v - prev:.3f}"
+        label = f"{v:.4f}" if prev is None else f"{v:.4f}\n{v - prev:+.3f}".replace("-", "−")
         ax.text(bar.get_x() + bar.get_width() / 2, v + 0.012, label, ha="center", va="bottom", fontsize=10.5, color=INK)
         prev = v
-    ax.set_ylim(0, 0.80)
+    ax.set_ylim(0, 1.0)
     ax.yaxis.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.set_ylabel("Score (train / OOF)", color=MUTED, fontsize=10)
-    ax.tick_params(axis="x", labelsize=9.5, colors=INK)
-    ax.set_title("Score по шагам (BS-шаги — диагностические модели EDA)", loc="left",
+    ax.set_ylabel("Score (OOF, групповая валидация)", color=MUTED, fontsize=10)
+    ax.tick_params(axis="x", labelsize=9, colors=INK)
+    ax.set_title("Score по шагам: 0.309 → 0.830 (последний шаг — отказ от TTA ради независимости от устройства)", loc="left",
                  fontsize=12, color=INK, fontweight="bold", pad=12)
     fig.tight_layout()
     out = FIG / "report_score_ladder.png"
@@ -95,9 +110,46 @@ def score_ladder() -> Path:
     return out
 
 
+def contrib() -> Path:
+    fig, ax = plt.subplots(figsize=(10.4, 4.6), dpi=170, facecolor=SURFACE)
+    _style(ax)
+    names = [c[0] for c in CONTRIB][::-1]
+    vals = [c[1] for c in CONTRIB][::-1]
+    bars = ax.barh(names, vals, height=0.56, color=SERIES, linewidth=0)
+    for bar, v in zip(bars, vals):
+        ax.text(max(v, 0) + 0.004, bar.get_y() + bar.get_height() / 2, f"{v:+.3f}".replace("-", "−"), va="center", fontsize=10.5,
+                color=INK)
+    ax.set_xlim(-0.012, 0.27)
+    ax.axvline(0, color=MUTED, linewidth=0.8)
+    ax.xaxis.grid(True, color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.set_xlabel("прирост Score (OOF) от решения", color=MUTED, fontsize=10)
+    ax.tick_params(axis="y", labelsize=10.5, colors=INK)
+    fig.suptitle("Вклад каждого решения в Score (OOF): всего +0.521 к baseline 0.309", x=0.012, ha="left", fontsize=12, color=INK,
+                 fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    out = FIG / "report_contrib.png"
+    fig.savefig(out, facecolor=SURFACE)
+    plt.close(fig)
+    return out
+
+
+def bs_case_crops() -> list[Path]:
+    """Строки из bs_error_cases.png (6 строк по 288 px) отдельными картинками для слайдов."""
+    from PIL import Image
+
+    src = Image.open(FIG / "bs_error_cases.png")
+    row_h = src.height // 6
+    out = []
+    for name, row in (("bs_case_field.png", 0), ("bs_case_arc.png", 4), ("bs_case_cloud.png", 2)):
+        src.crop((0, row * row_h + 40, src.width, (row + 1) * row_h)).save(FIG / name)
+        out.append(FIG / name)
+    return out
+
+
 def main() -> int:
     FIG.mkdir(parents=True, exist_ok=True)
-    for path in (af_contrib(), score_ladder()):
+    for path in [af_contrib(), score_ladder(), contrib(), *bs_case_crops()]:
         print(f"записано: {path}")
     return 0
 

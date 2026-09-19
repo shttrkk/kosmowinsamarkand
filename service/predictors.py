@@ -50,7 +50,14 @@ def get_af_predictor() -> tuple[Callable[[dict], tuple[np.ndarray, np.ndarray | 
 
 def get_bs_predictor() -> tuple[Callable[[dict], np.ndarray], str]:
     try:
-        p = _load("firemon.models.bs.predictor", "BSPredictor", "bs")
+        # параметры BS-модели (пути к весам, TTA, стек) лежат в configs/bs_inference.yaml — тот же конфиг, что у
+        # inference.py; секции `bs` общего inference.yaml недостаточно: без путей к весам предиктор молча уходит в правила
+        from firemon.models.bs.infer import load_bs_config
+        from firemon.models.bs.predictor import BSPredictor
+
+        p = BSPredictor(load_bs_config(_config("bs"))).load()
+        if not p.models and p.booster is None:  # аварийный режим предиктора = те же правила: в манифест — честно
+            raise RuntimeError("веса BS-моделей не загружены")
         return (lambda chip: np.asarray(p.predict(chip))), "BSPredictor"
     except Exception as e:
         log.warning("BSPredictor недоступен (%s) — слой pred строится заглушкой на правилах", e)
