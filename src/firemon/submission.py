@@ -27,7 +27,10 @@ def chip_kind(chip_id: str) -> str:
 
 
 def read_submission(csv_path: str | Path) -> dict[str, list]:
-    """Читает csv без pandas-магии с NaN: всё строками, пустой rle остаётся ''."""
+    """Читает csv без pandas-магии с NaN: всё строками, пустой rle остаётся ''.
+
+    Принимает оба стиля: rle в кавычках (`"1 3"`, `""`) и без (`1 3`, пустое поле), переводы строк LF и CRLF.
+    """
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
@@ -43,10 +46,13 @@ def read_submission(csv_path: str | Path) -> dict[str, list]:
 def write_submission(rows: list[tuple[str, int, str]], out_csv: str | Path) -> None:
     out_csv = Path(out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
+    # Текстовый формат — как в baseline/example_submission.csv организаторов: без кавычек (QUOTE_MINIMAL; в rle нет
+    # запятых и кавычек), пустая маска — пустое поле, переводы строк CRLF, порядок строк — как передан (= шаблон).
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
-        f.write(",".join(COLUMNS) + "\n")
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
+        writer.writerow(COLUMNS)
         for chip_id, class_id, rle in rows:
-            f.write(f'{chip_id},{int(class_id)},"{rle}"\n')  # rle всегда в кавычках, пустая маска → ""
+            writer.writerow([chip_id, int(class_id), rle])
 
 
 def submission_rows(af_preds: Mapping[str, np.ndarray], bs_preds: Mapping[str, np.ndarray]) -> list[tuple[str, int, str]]:
@@ -115,7 +121,7 @@ def validate_submission(csv_path: str | Path, sample_submission_csv: str | Path,
     masks: dict[str, dict[str, np.ndarray]] = {}
     for line, (cid, cls, rle) in enumerate(zip(sub["chip_id"], sub["class_id"], sub["rle"]), start=2):
         if rle.strip().lower() in ("nan", "none", "null"):
-            errors.append(f"строка {line} ({cid}, {cls}): NaN/пропуск в rle — пустая маска кодируется как \"\"")
+            errors.append(f"строка {line} ({cid}, {cls}): NaN/пропуск в rle — пустая маска кодируется пустым полем")
             continue
         try:
             shape = shapes.get(cid) or DEFAULT_SHAPES[chip_kind(cid)]

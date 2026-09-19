@@ -67,5 +67,5 @@ def test_inference_on_real_test(test_dir, tmp_path):
     sub, tpl = read_submission(out), read_submission(sample)
     assert list(zip(sub["chip_id"], sub["class_id"])) == list(zip(tpl["chip_id"], tpl["class_id"]))
     assert len(sub["chip_id"]) == 447
-    lines = out.read_text(encoding="utf-8").splitlines()[1:]
-    assert all(line.count('"') == 2 and line.endswith('"') for line in lines)  # rle всегда в кавычках, пустая → ""
+    raw = out.read_bytes().decode("utf-8")
+    assert '"' not in raw and raw.count("\r\n") == 448 == raw.count("\n")  # как пример организаторов: без кавычек, CRLF

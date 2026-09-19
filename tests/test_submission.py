@@ -59,11 +59,13 @@ def test_build_matches_template_and_roundtrips(good, template, preds):
 
 
 def test_file_format(good):
-    lines = good.read_text(encoding="utf-8").splitlines()
+    raw = good.read_bytes().decode("utf-8")
+    lines = raw.split("\r\n")
+    assert raw.endswith("\r\n") and lines.pop() == "" and "\n" not in "".join(lines)  # CRLF, как в примере организаторов
     assert lines[0] == "chip_id,class_id,rle"
     assert len(lines) == 1 + 8
-    assert all(line.endswith('"') and line.count('"') == 2 for line in lines[1:])  # rle всегда в кавычках
-    assert f'{AF_IDS[1]},1,""' in lines  # пустая маска → ""
+    assert '"' not in raw  # rle без кавычек (QUOTE_MINIMAL)
+    assert f"{AF_IDS[1]},1," in lines  # пустая маска → пустое поле
     assert "nan" not in good.read_text(encoding="utf-8").lower()
 
 
@@ -175,4 +177,4 @@ def test_real_template(test_dir, tmp_path):
     assert build_submission({}, {}, sample, out, strict=False) == 447
     assert validate_submission(out, sample, shapes) == []
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert all(line.endswith('""') for line in lines[1:])
+    assert all(line.endswith(",") for line in lines[1:])  # пустая маска → пустое поле
