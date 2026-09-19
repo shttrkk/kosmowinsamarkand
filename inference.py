@@ -21,11 +21,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))  # работает и без `pip install -e .`
 
 from firemon.io import LAYERS, list_chips  # noqa: E402
-from firemon.pipeline import (BACKENDS, Profiler, RunContext, default_workers, missing_layers,  # noqa: E402
-                              run_backend)
+from firemon.pipeline import BACKENDS, Profiler, RunContext, missing_layers, run_backend  # noqa: E402
 from firemon.submission import (build_submission, chip_kind, read_submission, shapes_from_meta,  # noqa: E402
                                 submission_rows, validate_submission, write_submission)
-from firemon.utils import get_logger, load_config, seed_everything  # noqa: E402
+from firemon.utils import auto_threads, get_logger, load_config, seed_everything  # noqa: E402
 
 log = get_logger("inference")
 EXIT_OK, EXIT_INVALID, EXIT_NO_INPUT = 0, 1, 2
@@ -111,7 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default=str(ROOT / "configs" / "inference.yaml"))
     ap.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                     help="устройство для нейросетевых бэкендов (LightGBM и правила всегда на CPU)")
-    ap.add_argument("--workers", type=int, default=None, help="потоки чтения/признаков (по умолчанию из конфига)")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="потоки чтения/признаков (по умолчанию из конфига: auto = min(число ядер, 16))")
     ap.add_argument("--profile", action="store_true", help="напечатать таблицу времени по этапам")
     args = ap.parse_args(argv)
 
@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             raise InputError(f"--config: файл не найден: {args.config}")
         cfg = load_config(args.config)
         seed_everything(int(cfg.get("seed", 42)), with_torch=False)  # torch сидируют сами torch-бэкенды
-        workers = args.workers or int(cfg.get("workers") or 0) or default_workers()
+        workers = args.workers or auto_threads(cfg.get("workers"))  # auto → min(число ядер, 16)
         ctx = RunContext(workers=max(1, workers), device=args.device, profiler=prof)
         sample = find_sample_submission(args.data_dir, args.sample_submission)
         code = run(args.data_dir, args.output, sample, cfg, ctx)

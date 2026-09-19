@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import numpy as np
 
 from ...features.bs_features import (FEATURE_GROUPS, compute_bs_features, feature_names, groups_for,
                                      load_lc_medians, select_channels)
-from ...utils import REPO_ROOT, get_logger
+from ...utils import REPO_ROOT, auto_threads, cuda_usable, get_logger
 from .common import decode_probs
 from .postprocess import postprocess_bs
 from .rules import predict_bs_rules
@@ -33,8 +34,8 @@ DEFAULTS: dict = {
     "gpu_half": False,           # fp32 без TF32 на GPU: маски побайтно совпадают с CPU (fp16 давал ~25 отличающихся px/чип)
     "prob_decimals": None,       # округление вероятностей UNet до N знаков перед стеком (сглаживает различия устройств)
     "batch_size": 8,
-    "num_threads": 8,            # потоки чтения/признаков/постобработки и torch на CPU
-    "lgbm_threads": 16,          # потоки LightGBM (один вызов predict на батч)
+    "num_threads": "auto",       # потоки чтения/признаков/постобработки и torch на CPU; auto = min(число ядер, 16)
+    "lgbm_threads": "auto",      # потоки LightGBM (один вызов predict на батч)
     "unet_weights": ["weights/bs_unet.pt"],
     "aux_unet_weights": [],      # доп. UNet (напр. половинного разрешения): их p_burn — отдельные признаки стека, не в среднее
     "stack_weights": "weights/bs_stack.txt",
@@ -58,6 +59,8 @@ def _resolve(path: str | Path) -> Path:
 class BSPredictor:
     def __init__(self, config: dict | None = None):
         self.cfg = {**DEFAULTS, **(config or {})}
+        for key in ("num_threads", "lgbm_threads"):  # "auto"/None → min(число ядер, 16)
+            self.cfg[key] = auto_threads(self.cfg.get(key))
         self.models: list = []
         self.aux_models: list = []
         self.channels: list[str] | None = None
@@ -124,25 +127,29 @@ class BSPredictor:
         return self
 
     def _load_unets(self, paths: list[Path], dest: list) -> None:
+        # cuBLAS (CUDA >= 10.2) требует эту переменную при torch.use_deterministic_algorithms(True); выставляется до первого
+        # CUDA-вызова и только если её не задал пользователь — на результат инференса не влияет
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         import torch
 
         from .unet import build_unet
 
         want = self.cfg["device"]
-        use_cuda = want in ("auto", "cuda") and torch.cuda.is_available()
+        use_cuda = want in ("auto", "cuda") and cuda_usable(torch)
         half = use_cuda and bool(self.cfg.get("gpu_half", False))
-        if use_cuda and not half:
-            torch.backends.cuda.matmul.allow_tf32 = False
-            torch.backends.cudnn.allow_tf32 = False
-        if want == "cuda" and not use_cuda:
-            log.warning("device=cuda, но CUDA недоступна — CPU")
+        # TF32 выключен явно: на Ampere/Hopper (A100, H100) он иначе включается в cuDNN и меняет результат свёрток
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cudnn.benchmark = False  # автоподбор алгоритмов свёртки зависит от GPU и загрузки
+        if want in ("auto", "cuda") and not use_cuda:
+            log.warning("CUDA недоступна (нет GPU или старый драйвер) — инференс BS на CPU")
         self.device = torch.device("cuda" if use_cuda else "cpu")
         if not use_cuda:
             torch.set_num_threads(int(self.cfg["num_threads"]))
         dt = torch.float16 if half else torch.float32
         self.channels = self.channels or []
         for p in paths:  # чекпойнты ансамбля могут быть обучены на разных наборах каналов
-            ck = torch.load(p, map_location="cpu", weights_only=False)
+            ck = torch.load(p, map_location="cpu", weights_only=True)  # чекпойнт — тензоры + простые типы, pickle не нужен
             self.channels += [c for c in ck["channels"] if c not in self.channels]
             model = build_unet(ck["encoder"], len(ck["channels"]), pretrained=False, arch=ck.get("arch", "unet"))
             model.load_state_dict(ck["state_dict"])

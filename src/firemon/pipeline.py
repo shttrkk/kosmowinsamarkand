@@ -81,17 +81,19 @@ class RunContext:
         """'cuda' | 'cpu'. torch импортируется только здесь — бэкенды без нейросетей за импорт не платят."""
         if self.device == "cpu":
             return "cpu"
-        import torch
+        from .utils import cuda_usable
 
-        if torch.cuda.is_available():
+        if cuda_usable():
             return "cuda"
-        if self.device == "cuda":
-            log.warning("--device cuda запрошен, но CUDA недоступна — работаем на CPU")
+        log.warning("CUDA недоступна (нет GPU или старый драйвер) — нейросетевые бэкенды работают на CPU")
         return "cpu"
 
 
 def default_workers() -> int:
-    return max(1, min(8, os.cpu_count() or 1))
+    """Потоки чтения/признаков по умолчанию: min(число ядер, 16) — не константа (2 ядра → 2, 64 ядра → 16)."""
+    from .utils import auto_threads
+
+    return auto_threads(None)
 
 
 def empty_mask(kind: str, chip_id: str, ctx: RunContext) -> np.ndarray:

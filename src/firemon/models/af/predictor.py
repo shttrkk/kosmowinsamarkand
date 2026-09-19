@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ...features.af_features import FEATURE_NAMES, af_feature_rows, candidate_mask, chip_valid
-from ...utils import REPO_ROOT
+from ...utils import REPO_ROOT, auto_threads
 
 META_NAME = "af_lgbm_meta.json"
 
@@ -17,7 +17,7 @@ class AFPredictor:
         cfg = config or {}
         wd = Path(cfg.get("weights_dir", "weights"))
         self.weights_dir = wd if wd.is_absolute() else REPO_ROOT / wd
-        self.num_threads = int(cfg.get("num_threads", 4))
+        self.num_threads = auto_threads(cfg.get("num_threads"))  # auto → min(число ядер, 16); на результат не влияет
         self.threshold = cfg.get("threshold")            # None → порог из meta (подобран по OOF)
         self.boosters: list = []
         self.cols: np.ndarray | None = None
