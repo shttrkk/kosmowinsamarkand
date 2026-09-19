@@ -1,0 +1,23 @@
+{
+ "decode": {
+  "t_burn": 0.44,
+  "w": [
+   0.6,
+   1.0,
+   0.7
+  ]
+ },
+ "postprocess": {
+  "scl_post_zero": true,
+  "scl_zero": true,
+  "water_lc_zero": true,
+  "event_zero_r": 300,
+  "min_component_px": 25,
+  "fill_holes_px": 32,
+  "nonempty_min_px": 25
+ },
+ "ens_weights": {
+  "unet": 1.0,
+  "lgbm": 0.0
+ }
+}

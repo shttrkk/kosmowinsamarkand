@@ -16,15 +16,17 @@ OOF = ROOT / "data" / "cache" / "bs_oof"
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--aux-dir", required=True)
-    ap.add_argument("--aux-tag", required=True)
+    ap.add_argument("--aux-tag", required=True, nargs="+")
     ap.add_argument("--out", required=True)
     ap.add_argument("--base", default="avg14nt")
     args = ap.parse_args()
     for s in ("group", "temporal"):
         base = np.load(OOF / f"{args.base}_{s}.npy")
-        aux = np.load(Path(args.aux_dir) / f"{args.aux_tag}_{s}.npy")
-        pz = (1.0 - aux[:, 0].astype(np.float32)).astype(np.float16)  # P(зона) = 1 − p0
-        out = np.concatenate([base, pz[:, None]], axis=1)
+        chans = []
+        for tag in args.aux_tag:
+            aux = np.load(Path(args.aux_dir) / f"{tag}_{s}.npy")
+            chans.append((1.0 - aux[:, 0].astype(np.float32)).astype(np.float16)[:, None])  # P(гарь/зона) = 1 − p0
+        out = np.concatenate([base, *chans], axis=1)
         # у temporal заполнены только val-чипы — как и в base
         np.save(OOF / f"{args.out}_{s}.npy", out)
         print(s, out.shape)

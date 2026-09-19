@@ -36,6 +36,7 @@ DEFAULTS: dict = {
     "num_threads": 8,            # потоки чтения/признаков/постобработки и torch на CPU
     "lgbm_threads": 16,          # потоки LightGBM (один вызов predict на батч)
     "unet_weights": ["weights/bs_unet.pt"],
+    "aux_unet_weights": [],      # доп. UNet (напр. половинного разрешения): их p_burn — отдельные признаки стека, не в среднее
     "stack_weights": "weights/bs_stack.txt",
     "stack_gate": 0.03,
     "lgbm_weights": "weights/bs_lgbm.txt",
@@ -58,6 +59,7 @@ class BSPredictor:
     def __init__(self, config: dict | None = None):
         self.cfg = {**DEFAULTS, **(config or {})}
         self.models: list = []
+        self.aux_models: list = []
         self.channels: list[str] | None = None
         self.booster = None      # пиксельный LGBM
         self.stack = None        # LGBM 2-го уровня
@@ -91,7 +93,12 @@ class BSPredictor:
             if missing:
                 log.warning("нет весов UNet %s — UNet отключён", [str(m) for m in missing])
             else:
-                self._load_unets(paths)
+                self._load_unets(paths, self.models)
+                aux = [_resolve(p) for p in cfg.get("aux_unet_weights") or []]
+                if aux and all(p.exists() for p in aux):
+                    self._load_unets(aux, self.aux_models)
+                elif aux:
+                    raise FileNotFoundError(f"нет весов доп. UNet: {[str(p) for p in aux if not p.exists()]}")
         if cfg["use_lgbm"]:
             self.booster = self._load_booster("lgbm_weights", "LightGBM")
         if cfg["use_stack"] and self.models:
@@ -116,7 +123,7 @@ class BSPredictor:
         self.loaded = True
         return self
 
-    def _load_unets(self, paths: list[Path]) -> None:
+    def _load_unets(self, paths: list[Path], dest: list) -> None:
         import torch
 
         from .unet import build_unet
@@ -133,7 +140,7 @@ class BSPredictor:
         if not use_cuda:
             torch.set_num_threads(int(self.cfg["num_threads"]))
         dt = torch.float16 if half else torch.float32
-        self.channels = []
+        self.channels = self.channels or []
         for p in paths:  # чекпойнты ансамбля могут быть обучены на разных наборах каналов
             ck = torch.load(p, map_location="cpu", weights_only=False)
             self.channels += [c for c in ck["channels"] if c not in self.channels]
@@ -143,8 +150,8 @@ class BSPredictor:
             model = model.half() if half else model.float()
             mean = torch.tensor(ck["norm"]["mean"], dtype=dt, device=self.device).view(1, -1, 1, 1)
             std = torch.tensor(ck["norm"]["std"], dtype=dt, device=self.device).view(1, -1, 1, 1)
-            self.models.append({"model": model, "loss": ck.get("loss", "ce_dice"), "channels": list(ck["channels"]),
-                                "mean": mean, "std": std})
+            dest.append({"model": model, "loss": ck.get("loss", "ce_dice"), "channels": list(ck["channels"]),
+                         "mean": mean, "std": std, "scale": float(ck.get("scale", 1.0) or 1.0)})
 
     # ---------- предсказание ----------
     def _features(self, chip: dict) -> np.ndarray:
@@ -159,13 +166,24 @@ class BSPredictor:
         tta = bool(self.cfg["tta"] if self.device.type == "cuda" else self.cfg["tta_cpu"])
         with torch.inference_mode():
             xb = torch.from_numpy(x).to(self.device)
-            out = 0.0
-            for m in self.models:
+            def run(m):
                 idx = [self.channels.index(c) for c in m["channels"]]
                 xm = xb if idx == list(range(xb.shape[1])) else xb[:, idx]
                 xm = (xm.to(m["mean"].dtype) - m["mean"]) / m["std"]
-                out = out + predict_probs(m["model"], xm, m["loss"], tta)
-            out = (out / len(self.models)).float().cpu().numpy()
+                if m["scale"] != 1.0:  # сеть обучена на пониженном разрешении (больше контекст)
+                    xm = torch.nn.functional.interpolate(xm, scale_factor=m["scale"], mode="bilinear", align_corners=False)
+                p = predict_probs(m["model"], xm, m["loss"], tta)
+                if m["scale"] != 1.0:
+                    p = torch.nn.functional.interpolate(p, size=xb.shape[-2:], mode="bilinear", align_corners=False)
+                return p
+
+            out = 0.0
+            for m in self.models:
+                out = out + run(m)
+            out = out / len(self.models)
+            if self.aux_models:  # 5-й и далее каналы: p_burn доп. сетей
+                out = torch.cat([out] + [1.0 - run(m)[:, :1] for m in self.aux_models], dim=1)
+            out = out.float().cpu().numpy()
         nd = self.cfg.get("prob_decimals")
         if nd is not None:
             out = np.round(out, int(nd))
@@ -191,8 +209,9 @@ class BSPredictor:
 
     def _stack_rows(self, feats: np.ndarray, p: np.ndarray):
         """Строки 2-го уровня для пикселей-ворот одного чипа → (X (n,F) float32, индексы пикселей)."""
-        from .stack import N_UNET_FEATS, stack_feature_names, unet_features
+        from .stack import AUX_FEATS, N_UNET_FEATS, aux_features, stack_feature_names, unet_features
 
+        p, aux = p[:4], p[4:]
         if self._stack_cols is None:
             base = stack_feature_names()[:-N_UNET_FEATS]
             cols = [self.names.index(n) for n in base]
@@ -202,16 +221,19 @@ class BSPredictor:
             return None, idx
         f = feats.reshape(feats.shape[0], -1)[self._stack_cols]
         u = unet_features(p).reshape(N_UNET_FEATS, -1)
-        X = np.empty((len(idx), f.shape[0] + N_UNET_FEATS), np.float32)
+        n_aux = len(AUX_FEATS) * len(aux)
+        X = np.empty((len(idx), f.shape[0] + N_UNET_FEATS + n_aux), np.float32)
         X[:, :f.shape[0]] = f[:, idx].T
-        X[:, f.shape[0]:] = u[:, idx].T
+        X[:, f.shape[0]:f.shape[0] + N_UNET_FEATS] = u[:, idx].T
+        if n_aux:
+            X[:, f.shape[0] + N_UNET_FEATS:] = aux_features(aux).reshape(n_aux, -1)[:, idx].T
         return X, idx
 
     def _stack_batch(self, feats: list[np.ndarray], probs: list[np.ndarray], ex: ThreadPoolExecutor) -> list[np.ndarray]:
         rows = list(ex.map(self._stack_rows, feats, probs))
         outs = []
         for p in probs:
-            o = np.zeros_like(p)
+            o = np.zeros((4,) + p.shape[1:], np.float32)
             o[0] = 1.0
             outs.append(o)
         parts = [X for X, _ in rows if X is not None]
@@ -250,10 +272,10 @@ class BSPredictor:
         """Этап 2 (CPU): [пиксельный LGBM] → стек-LGBM → декодирование → постобработка."""
         feats = [f for f, _ in prepared]
         if self.booster is not None:
-            probs = [self._lgbm_blend(f, p) for f, p in zip(feats, probs)]
+            probs = [self._lgbm_blend(f, p[:4]) for f, p in zip(feats, probs)]
         if self.stack is not None:
             probs = self._stack_batch(feats, probs, ex)
-        return list(ex.map(self._finish, chips, probs))
+        return list(ex.map(self._finish, chips, [p[:4] for p in probs]))
 
     def predict_proba_batch(self, chips: list[dict], feats: list[np.ndarray] | None = None,
                             ex: ThreadPoolExecutor | None = None) -> list[np.ndarray] | None:
@@ -278,6 +300,7 @@ class BSPredictor:
 
     def _finish(self, chip: dict, p: np.ndarray) -> np.ndarray:
         dec = self.cfg["decode"]
+        p = p[:4]
         mask = decode_probs(p, dec.get("t_burn"), tuple(dec.get("w", (1, 1, 1))))
         return postprocess_bs(mask, chip, self.cfg.get("postprocess"), probs=p, decode=dec)
 

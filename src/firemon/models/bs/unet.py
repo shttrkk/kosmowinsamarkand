@@ -245,7 +245,7 @@ def save_checkpoint(model, path: Path, args, norm: dict) -> None:
     """fp16-веса (resnet34-UNet ≈ 47 МБ) + всё нужное для сборки модели на инференсе."""
     state = {k: (v.half() if v.is_floating_point() else v).cpu() for k, v in model.state_dict().items()}
     torch.save({"state_dict": state, "encoder": args.encoder, "arch": args.arch, "loss": args.loss,
-                "channels": norm["channels"], "norm": norm}, path)
+                "channels": norm["channels"], "norm": norm, "scale": float(getattr(args, "scale", 1.0) or 1.0)}, path)
 
 
 def prepare_tensors(data_dir: str | Path, norm_path: Path | None = None, channels: list[str] | None = None,
