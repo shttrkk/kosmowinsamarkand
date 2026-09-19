@@ -228,7 +228,7 @@ RLE с нумерацией с 1 построчно (пары «start length» �
 
 Требуется **Apple Silicon (M1 и новее) и macOS 14+**: у зафиксированных версий rasterio и pyproj колёса для Mac собраны только под
 macOS 14 (arm64), а у torch 2.6.0 нет сборок для Intel-Mac. На Intel-Mac и на более старых macOS используйте Docker (раздел 3).
-**Проверено на Apple M4**: submission отличается от эталонного на 1 пиксель из 23,3 млн. Кроме того, `requirements-macos.txt` полностью разрешается
+**Проверено на Apple M4**: submission отличается от эталонного на 1 пиксель из 23,3 млн (подробности: `reports/README_check.md`, раздел macOS). Кроме того, `requirements-macos.txt` полностью разрешается
 для `macosx_14_0_arm64` / Python 3.12 (`pip install --dry-run --platform … --only-binary=:all:`). Код платформенно-нейтрален
 (на Linux проверен в Docker), GPU на Mac не используется.
 
