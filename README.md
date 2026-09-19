@@ -414,7 +414,7 @@ AF- и BS-модули, сервис, устойчивость инференс�
 | `data/test` | `test_inference_smoke.py::test_inference_on_real_test`, `test_reproducibility.py`, проверки тестовой раскладки | skip: «нет data/test» |
 | `data/test_fake` (`python scripts/make_fake_test.py`, нужен `data/train`) | сквозной инференс с метрикой на 20 AF + 10 BS чипах | skip: «нет data/test_fake» |
 
-С полными данными — 164 теста, ≈ 3–7 мин; в чистом клоне — см. `reports/tasklog/clone_check.md`.
+С полными данными — 168 тестов (167 passed, 1 skipped), ≈ 3–7 мин; в чистом клоне — см. `reports/tasklog/clone_check.md`.
 На Windows тесты сами передают подпроцессам `PYTHONIOENCODING=utf-8`.
 
 ## 12. Состав репозитория
@@ -451,7 +451,7 @@ scripts/                check_data.py, check_submission.py, compare_submissions.
                         `weights_repro/`, `weights_night_*/` и кэши `data/cache/` — в git их нет, воспроизводятся `train.py --weights-dir …`)
 service/                FastAPI-приложение (app.py, …), static/ (интерфейс + vendor: Leaflet, Leaflet.draw, polygon-clipping,       17 МБ
                         Swagger UI), data/ — снимок эталонных слоёв *.geojson.gz + manifest.json
-tests/                  pytest, 164 теста; fixtures/ — пример и шаблон submission организаторов (байт-в-байт)                    0.6 МБ
+tests/                  pytest, 168 тестов; fixtures/ — пример и шаблон submission организаторов (байт-в-байт)                    0.6 МБ
 reports/                report.md / report.pdf, final_numbers.md, eda.md, baseline_review.md, af_module.md, bs_module.md,          30 МБ
                         service.md, experiments.md, submissions.md, speed.md, test_vs_train.md, figures/ (рисунки, 25 МБ),
                         tasklog/ (журналы задач: tz_compliance.md, release_check.md, h100_readiness.md, final_check.md, clone_check.md, merge_*.md)
