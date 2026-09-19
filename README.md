@@ -24,6 +24,7 @@
 8+ ГБ RAM. GPU не обязательна: с ней нужен драйвер NVIDIA ≥ 550 (CUDA 12.4 приходит внутри колеса torch, системный CUDA Toolkit
 не нужен); без GPU или со старым драйвером инференс сам переходит на CPU с одной строкой предупреждения, код выхода 0.
 Веса моделей уже лежат в `weights/` — скачивать ничего не нужно, **сеть при инференсе не используется**.
+**Понадобится архив с тестом от организаторов** — `fire-test-renamed.tar` (≈ 920 МБ, в репозитории его нет; куда положить — шаг 5); обучающий архив для получения `submission.csv` не нужен.
 
 ### Шаг 1. Получить код
 
@@ -97,43 +98,63 @@ python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp;
 Должно напечатать `2.6.0+cu124 True` (на машине без GPU — `2.6.0+cpu False`). Заодно эта команда один раз загружает с диска
 бинарные модули torch и LightGBM.
 
-### Шаг 5. Положить тестовые данные в `data/test/`
+### Шаг 5. Положить тестовые данные
 
-Данные выдают организаторы (архив `fire-test-renamed.tar`, внутри уже лежит каталог `test/`); в репозиторий они не входят.
+**Что нужно.** Архив `fire-test-renamed.tar` (≈ 920 МБ) — его выдают организаторы хакатона. В репозитории данных нет и быть не
+может: это и лимит git, и правила использования данных.
 
-Linux:
+**Куда скачать.** В любую папку, например `~/Downloads` (Mac/Linux) или `C:\Users\<имя>\Downloads` (Windows).
+
+**Распаковать** — из корня репозитория (каталог `fire-monitoring`); внутри архива уже лежит папка `test/`, поэтому распаковываем в `data`:
+
+Linux / macOS:
 
 ```bash
 mkdir -p data
-tar -xf /path/to/fire-test-renamed.tar -C data
+tar -xf ~/Downloads/fire-test-renamed.tar -C data
 ```
 
-Windows (PowerShell):
+Windows (PowerShell; штатный `tar` есть в Windows 10 и новее):
 
 ```powershell
 New-Item -ItemType Directory -Force data | Out-Null
-tar -xf C:\path\to\fire-test-renamed.tar -C data
+tar -xf "$env:USERPROFILE\Downloads\fire-test-renamed.tar" -C data
 ```
 
-Должно получиться:
+Если архив лежит в другом месте — подставьте свой путь вместо `~/Downloads/…` или `$env:USERPROFILE\Downloads\…`.
+
+**Что должно получиться:**
 
 ```
-data/test/
-  meta.csv                   chip_id,kind,width,height,gsd,valid_frac,cloud_frac — 269 строк (180 af + 89 bs)
-  sample_submission.csv      шаблон: 447 строк chip_id,class_id,rle — AF по 1 строке, BS по 3 (class_id 1, 2, 3)
-  af/
-    viirs/AF_te_000001_VIIRS_I1-I5.tif …     180 файлов, 8 каналов
-    aux/AF_te_000001_AUX.tif …               180 файлов, 5 каналов
-  bs/
-    sentinel2_pre/BS_te_000001_Sentinel-2_pre.tif …      89 файлов
-    sentinel2_post/BS_te_000001_Sentinel-2_post.tif …
-    sentinel1_pre/BS_te_000001_Sentinel-1_pre.tif …
-    sentinel1_post/BS_te_000001_Sentinel-1_post.tif …
-    aux/BS_te_000001_AUX.tif …
+data/
+└── test/
+    ├── meta.csv                 269 строк: 180 af + 89 bs
+    ├── sample_submission.csv    шаблон ответа, 447 строк
+    ├── af/
+    │   ├── viirs/   AF_te_000001_VIIRS_I1-I5.tif … (180 файлов)
+    │   └── aux/     AF_te_000001_AUX.tif … (180)
+    └── bs/
+        ├── sentinel2_pre/  BS_te_000001_Sentinel-2_pre.tif … (89)
+        ├── sentinel2_post/ … (89)
+        ├── sentinel1_pre/  … (89)
+        ├── sentinel1_post/ … (89)
+        └── aux/            … (89)
 ```
 
-Проверить комплектность: `python scripts/check_data.py --split test` → «ВСЁ ОК». Данные могут лежать где угодно — тогда на шаге 6
-укажите свой путь в `--data-dir`. Шаблон строк ищется в порядке: `--sample-submission` → `<data-dir>/sample_submission.csv` →
+**Проверка:**
+
+```
+python scripts/check_data.py --split test
+```
+
+В конце должно быть напечатано «ВСЁ ОК». Если архив распаковался во вложенную папку (`data/test/test/…`) или данные лежат в другом
+месте — переносить не обязательно, достаточно указать путь: `--data-dir <путь к папке, где лежат meta.csv и af/, bs/>` (тот же
+путь потом передаётся в `inference.py` на шаге 6).
+
+**`data/train` для этого шага не нужен.** Обучающий архив `fire-train-renamed.tar` (2.3 ГБ) нужен ТОЛЬКО для обучения моделей и
+для слоя «Модель» в сервисе; для получения `submission.csv` и для демо сервиса на слое «Эталон» он не нужен.
+
+Шаблон строк ищется в порядке: `--sample-submission` → `<data-dir>/sample_submission.csv` →
 `baseline/sample_submission.csv`; **каталог `baseline/` для инференса не нужен**. Чип из шаблона, которого нет на диске или который
 не читается, получает пустую маску и предупреждение — пайплайн не падает.
 
@@ -227,7 +248,7 @@ pip install -r requirements-macos.txt && python -m compileall -q src inference.p
 # 4) проверка установки (та же команда, что для Linux; на Mac напечатает «2.6.0 False» — CUDA нет, это нормально)
 python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"
 
-# 5) тестовые данные — как в шаге 5 выше: mkdir -p data && tar -xf /path/to/fire-test-renamed.tar -C data
+# 5) тестовые данные — как в шаге 5 выше: mkdir -p data && tar -xf ~/Downloads/fire-test-renamed.tar -C data
 
 # 6) инференс на CPU
 python inference.py --data-dir data/test --output submission.csv --device cpu
