@@ -217,6 +217,30 @@ BS_BACKENDS: dict[str, Backend] = {
 BACKENDS = {"af": AF_BACKENDS, "bs": BS_BACKENDS}
 
 
+def prewarm_torch(cfg: dict, ctx: RunContext) -> threading.Thread | None:
+    """Фоновый прогрев нейросетевого стека, пока считается AF: импорт torch / segmentation_models_pytorch, загрузка их DLL
+    и создание CUDA-контекста. Раньше эти ≈ 3–4 с (на холодном диске — больше) шли последовательно после AF. На результат не
+    влияет: поток ничего не вычисляет, только импортирует; BS-бэкенд позже получает уже загруженные модули. Любая ошибка
+    прогрева молча игнорируется — её заново и с понятным сообщением встретит сам бэкенд."""
+    if str((cfg.get("bs") or {}).get("model", "rules")) != "unet":
+        return None
+
+    def work():
+        try:
+            with ctx.profiler.stage("bs: прогрев torch/CUDA (фон, параллельно AF)"):
+                import segmentation_models_pytorch  # noqa: F401 — тянет torch, torchvision, timm
+                if ctx.device != "cpu":
+                    from .utils import cuda_usable
+
+                    cuda_usable()
+        except Exception:  # noqa: BLE001
+            pass
+
+    thread = threading.Thread(target=work, name="prewarm-torch", daemon=True)
+    thread.start()
+    return thread
+
+
 def run_backend(kind: str, data_dir: Path, chip_ids: list[str], cfg: dict, ctx: RunContext):
     """Запускает бэкенд `cfg['model']`; если он не поднялся целиком (нет весов и т.п.) — `cfg['fallback']` (rules).
 

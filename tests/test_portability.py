@@ -97,3 +97,39 @@ def test_inference_path_has_no_network_or_pretrained_downloads():
     assert "allow_tf32 = False" in predictor and "CUBLAS_WORKSPACE_CONFIG" in predictor
     unet = (src / "models" / "bs" / "unet.py").read_text(encoding="utf-8")
     assert 'encoder_weights="imagenet" if pretrained else None' in unet
+
+
+def test_inference_imports_stay_lean():
+    """Путь инференса не тянет то, что ему не нужно (сервис/EDA/графики): geopandas, shapely, pyproj, matplotlib, albumentations;
+    `--help` не импортирует torch и LightGBM вовсе. Проверяется в отдельном процессе, чтобы не мешали импорты других тестов."""
+    import subprocess
+
+    code = (
+        "import sys; sys.path.insert(0, 'src'); sys.argv = ['inference.py', '--help']\n"
+        "import runpy\n"
+        "try:\n"
+        "    runpy.run_path('inference.py', run_name='__main__')\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "assert 'torch' not in sys.modules and 'lightgbm' not in sys.modules, 'help path imports heavy ML stack'\n"
+        "import firemon.models.af.predictor, firemon.models.bs.predictor, firemon.models.bs.infer, firemon.features.bs_features\n"
+        "bad = [m for m in ('geopandas', 'shapely', 'pyproj', 'matplotlib', 'albumentations', 'fastapi') if m in sys.modules]\n"
+        "assert not bad, bad\n"
+        "scipy_mods = sorted(m for m in sys.modules if m.startswith('scipy.') and m.count('.') == 1)\n"
+        "print('OK', len(sys.modules))\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert proc.returncode == 0 and "OK" in proc.stdout, proc.stderr[-800:]
+
+
+def test_prewarm_is_optional_and_harmless():
+    """Фоновый прогрев torch/CUDA: для бэкенда rules не запускается; для unet — поток, который завершается без исключений."""
+    from firemon.pipeline import prewarm_torch
+
+    assert prewarm_torch({"bs": {"model": "rules"}}, RunContext(device="cpu")) is None
+    assert prewarm_torch({}, RunContext(device="cpu")) is None
+    thread = prewarm_torch({"bs": {"model": "unet"}}, RunContext(device="cpu"))
+    assert thread is not None and thread.daemon
+    thread.join(timeout=120)
+    assert not thread.is_alive()

@@ -27,5 +27,9 @@ COPY configs ./configs
 COPY src ./src
 COPY weights ./weights
 
+# байткод своего кода — на этапе сборки: в контейнере PYTHONDONTWRITEBYTECODE=1 и корень может быть read-only, поэтому
+# без этого каждый запуск компилировал бы src/ заново (site-packages pip компилирует сам при установке)
+RUN python -m compileall -q src inference.py
+
 ENTRYPOINT ["python", "inference.py"]
 CMD ["--help"]

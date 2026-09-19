@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))  # работает и без `pip install -e .`
 
 from firemon.io import LAYERS, list_chips  # noqa: E402
-from firemon.pipeline import BACKENDS, Profiler, RunContext, missing_layers, run_backend  # noqa: E402
+from firemon.pipeline import BACKENDS, Profiler, RunContext, missing_layers, prewarm_torch, run_backend  # noqa: E402
 from firemon.submission import (build_submission, chip_kind, read_submission, shapes_from_meta,  # noqa: E402
                                 submission_rows, validate_submission, write_submission)
 from firemon.utils import auto_threads, get_logger, load_config, seed_everything  # noqa: E402
@@ -75,6 +75,8 @@ def run(data_dir: Path, output: Path, sample: Path | None, cfg: dict, ctx: RunCo
         raise InputError(f"в {data_dir} не найдено ни одного чипа из шаблона {sample} — проверьте --data-dir "
                          f"(ожидаются подкаталоги af/viirs, bs/sentinel2_pre, …)")
 
+    if chips.get("bs"):
+        prewarm_torch(cfg, ctx)  # импорт torch/smp и CUDA-контекст — в фоне, пока считается AF
     preds, n_failed = {}, 0
     for kind in BACKENDS:
         with prof.stage(f"{kind}: всего"):

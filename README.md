@@ -10,7 +10,7 @@
 git clone <repo-url> fire-monitoring && cd fire-monitoring
 python3.12 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.txt && python -m compileall -q src inference.py
 python inference.py --data-dir /path/to/test --output /path/to/submission.csv
 ```
 
@@ -20,8 +20,15 @@ python inference.py --data-dir /path/to/test --output /path/to/submission.csv
 git clone <repo-url> fire-monitoring; cd fire-monitoring
 py -3.12 -m venv .venv; .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.txt; python -m compileall -q src inference.py
 python inference.py --data-dir C:\path\to\test --output C:\path\to\submission.csv
+```
+
+Необязательная, но полезная проверка установки перед замером времени (один раз загружает бинарные модули torch / CUDA / LightGBM с диска —
+первый запуск инференса после неё идёт как обычный, а не «холодный»):
+
+```
+python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"
 ```
 
 Что важно знать до запуска:
@@ -32,6 +39,8 @@ python inference.py --data-dir C:\path\to\test --output C:\path\to\submission.cs
 - **Веса уже в репозитории** (`weights/`, 205 МБ, раздел 8) — скачивать ничего не нужно, **сеть при инференсе не используется**.
 - **Ожидаемое время** (269 чипов, от старта процесса до провалидированного файла): RTX 4070 — **≈ 23.5 с**; только CPU (i5-13600KF) —
   **≈ 57 с**; Docker CPU — ≈ 69 с; H100 — оценка ≈ 19–22 с (не проверялось: GPU-часть ≈ 6.5 с из 23.5, остальное — CPU-этапы).
+  **Самый первый запуск после установки** дольше — 27.9 с (первая загрузка ≈ 3 ГБ бинарных модулей torch / CUDA с диска; до оптимизации было 33.9 с);
+  после проверки установки ниже он равен обычному — 23.3 с (`reports/speed.md`, §1d).
   Нет GPU или старый драйвер → автоматический переход на CPU, код выхода 0. Быстрый режим v4 (−0.005 Score, ≈ 21 с): `--config configs/inference_bs_base.yaml`.
 - **Результат детерминирован**: GPU, CPU, Docker, любое `--workers` — побайтно один файл (sha256 финального `784fe474…`), формат — как
   `example_submission.csv` организаторов. Код выхода: 0 — файл записан и прошёл валидацию; 1 — не прошёл; 2 — нет входных данных.
@@ -128,6 +137,8 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt          # с GPU (torch + CUDA 12.4)
 # pip install -r requirements-cpu.txt    # без GPU: те же версии, torch CPU
+python -m compileall -q src inference.py # байткод своего кода заранее (site-packages pip компилирует сам)
+python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"   # проверка установки
 $env:PYTHONIOENCODING = 'utf-8'          # кириллица в выводе скриптов
 $env:PYTHONPATH = "$PWD\src"            # нужно только для команд вида `python -m firemon.…`
 ```
@@ -141,6 +152,8 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements-cpu.txt      # или requirements.txt при наличии GPU
+python -m compileall -q src inference.py # байткод своего кода заранее (site-packages pip компилирует сам)
+python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"   # проверка установки
 export PYTHONPATH=$PWD/src               # нужно только для команд вида `python -m firemon.…`
 ```
 
@@ -414,7 +427,7 @@ AF- и BS-модули, сервис, устойчивость инференс�
 | `data/test` | `test_inference_smoke.py::test_inference_on_real_test`, `test_reproducibility.py`, проверки тестовой раскладки | skip: «нет data/test» |
 | `data/test_fake` (`python scripts/make_fake_test.py`, нужен `data/train`) | сквозной инференс с метрикой на 20 AF + 10 BS чипах | skip: «нет data/test_fake» |
 
-С полными данными — 168 тестов (167 passed, 1 skipped), ≈ 3–7 мин; в чистом клоне — см. `reports/tasklog/clone_check.md`.
+С полными данными — 170 тестов (169 passed, 1 skipped), ≈ 3–7 мин; в чистом клоне — см. `reports/tasklog/clone_check.md`.
 На Windows тесты сами передают подпроцессам `PYTHONIOENCODING=utf-8`.
 
 ## 12. Состав репозитория
@@ -451,7 +464,7 @@ scripts/                check_data.py, check_submission.py, compare_submissions.
                         `weights_repro/`, `weights_night_*/` и кэши `data/cache/` — в git их нет, воспроизводятся `train.py --weights-dir …`)
 service/                FastAPI-приложение (app.py, …), static/ (интерфейс + vendor: Leaflet, Leaflet.draw, polygon-clipping,       17 МБ
                         Swagger UI), data/ — снимок эталонных слоёв *.geojson.gz + manifest.json
-tests/                  pytest, 168 тестов; fixtures/ — пример и шаблон submission организаторов (байт-в-байт)                    0.6 МБ
+tests/                  pytest, 170 тестов; fixtures/ — пример и шаблон submission организаторов (байт-в-байт)                    0.6 МБ
 reports/                report.md / report.pdf, final_numbers.md, eda.md, baseline_review.md, af_module.md, bs_module.md,          30 МБ
                         service.md, experiments.md, submissions.md, speed.md, test_vs_train.md, figures/ (рисунки, 25 МБ),
                         tasklog/ (журналы задач: tz_compliance.md, release_check.md, h100_readiness.md, final_check.md, clone_check.md, merge_*.md)
