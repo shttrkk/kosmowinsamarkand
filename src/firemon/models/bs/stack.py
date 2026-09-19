@@ -28,6 +28,7 @@ from .lgbm import PARAMS, fit
 log = get_logger("bs.stack")
 OOF = cache_dir() / "bs_oof"
 GATE = 0.03
+GATE_RULE = [False]  # эксперимент: ворота = p_burn > gate ИЛИ пиксельное правило эталона даёт гарь (rule_sev > 0)
 OPTIONAL_GROUPS = ("med2",)  # подключаются только флагом --extra-groups (эксперименты), в финальной модели их нет
 STACK_GROUPS = [g for g in FEATURE_GROUPS if g != "lcrel" and g not in OPTIONAL_GROUPS]
 UNET_FEATS = ["unet_p0", "unet_p1", "unet_p2", "unet_p3", "unet_pburn_m5", "unet_pburn_m11", "unet_sev_m5",
@@ -70,9 +71,14 @@ def stack_matrix(chip: dict, p_unet: np.ndarray, gate: float = GATE):
     p = np.asarray(p_unet, np.float32)
     p, aux = p[:4], p[4:]
     sel = (1.0 - p[0]) > gate
+    feats = None
+    if GATE_RULE[0]:
+        feats = compute_bs_features(chip, groups=STACK_GROUPS)
+        sel = sel | (feats[feature_names(STACK_GROUPS).index("rule_sev")] > 0)
     if not sel.any():
         return np.zeros((0, len(stack_feature_names(len(aux)))), np.float32), sel
-    feats = compute_bs_features(chip, groups=STACK_GROUPS)
+    if feats is None:
+        feats = compute_bs_features(chip, groups=STACK_GROUPS)
     parts = [feats[:, sel], unet_features(p)[:, sel]]
     if len(aux):
         parts.append(aux_features(aux)[:, sel])
@@ -209,10 +215,19 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--frac", type=float, default=0.35)
     ap.add_argument("--drop-unet", action="store_true", help="абляция: без признаков UNet (только ворота)")
     ap.add_argument("--drop-feats", nargs="*", default=None, help="абляция: исключить признаки по именам")
+    ap.add_argument("--gate", type=float, default=None, help="порог ворот p_burn UNet (по умолчанию GATE)")
+    ap.add_argument("--leaves", type=int, default=None)
+    ap.add_argument("--gate-rule", action="store_true", help="ворота: p_burn > gate ИЛИ rule_sev > 0")
     ap.add_argument("--ordinal", action="store_true", help="три бинарных стекера P(sev ≥ k) вместо multiclass")
     ap.add_argument("--extra-groups", nargs="*", default=None, help=f"доп. группы признаков из {OPTIONAL_GROUPS}")
     args = ap.parse_args(argv)
     seed_everything(42, with_torch=False)
+    if args.gate is not None:  # эксперименты: функции берут порог из значений по умолчанию
+        for fn in (stack_matrix, predict_stack):
+            fn.__defaults__ = tuple(args.gate if isinstance(d, float) else d for d in fn.__defaults__)
+    GATE_RULE[0] = bool(args.gate_rule)
+    if args.leaves:
+        STACK_PARAMS["num_leaves"] = args.leaves
     if args.extra_groups:
         STACK_GROUPS[:] = [g for g in FEATURE_GROUPS if g != "lcrel" and (g not in OPTIONAL_GROUPS or g in args.extra_groups)]
     chips = load_chips(args.data_dir)

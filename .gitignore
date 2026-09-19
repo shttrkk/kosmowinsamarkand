@@ -50,3 +50,4 @@ eda/cache/
 /weights_repro/
 /weights_lovasz/
 /weights_lovasz_pure/
+/weights_night_*/
