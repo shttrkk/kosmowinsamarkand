@@ -1,6 +1,6 @@
 # Мониторинг природных пожаров — КосмоХакатон 2026
 
-Команда **SAMARKAND**. Решение кейса: два модуля (активное горение VIIRS, степень поражения Sentinel-2/1), `submission.csv`, сервис, отчёт.
+Репозиторий: https://github.com/shttrkk/kosmowinsamarkand (приватный, тег `v1.0-final`). Команда **SAMARKAND**. Решение кейса: два модуля (активное горение VIIRS, степень поражения Sentinel-2/1), `submission.csv`, сервис, отчёт.
 
 ## Быстрый старт: от клона до `submission.csv` за 5 команд
 
@@ -52,6 +52,8 @@ python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp;
   презентация — `presentation/deck.pdf`, сверка с ТЗ — `reports/tasklog/tz_compliance.md`, проверка релиза — `reports/tasklog/release_check.md`.
 
 ## 1. Кратко о решении
+
+Репозиторий: https://github.com/shttrkk/kosmowinsamarkand (приватный), релиз — тег `v1.0-final`.
 
 Решение кейса «Мониторинг природных пожаров» из пяти частей:
 
@@ -252,6 +254,10 @@ CPU-часть (чтение deflate, признаки, стек-LGBM, пост�
 (для нейросетевых бэкендов; LightGBM и правила всегда на CPU; `auto` при недоступной CUDA сам выбирает CPU), `--workers N` (потоки
 чтения/признаков, по умолчанию `auto` = min(доступные ядра, 16) — на результат не влияет), `--profile` (таблица времени по этапам). Коды выхода: **0** — файл записан и прошёл валидацию;
 **1** — записан, но не прошёл валидацию; **2** — нет входных данных/конфига (понятное сообщение вместо трассировки).
+
+**Эталонный результат инференса** на тестовом наборе организаторов — сданный файл `submissions/submission_v5_final.csv`
+(sha256 `784fe474040914ed561c29efb8f34c1115e07f422e575e45bcfbceb683523afc`, 447 строк, public 0.8314): ваш запуск должен дать побайтно такой же
+(`certutil -hashfile out\submission.csv SHA256` / `sha256sum out/submission.csv`).
 
 Воспроизводимость: повторный запуск даёт **побайтно тот же файл** при любом `--workers` и числе потоков LightGBM
 (`tests/test_reproducibility.py`); результат в Docker (Linux) побайтно совпадает с Windows.
