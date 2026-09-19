@@ -255,6 +255,10 @@ python scripts/bs_log_experiments.py                 # перенос резул
 нужно ≈ 8 ГБ диска и ≈ 16 ГБ RAM). Результат обучения — `weights/bs_unet_r34_cedice.pt` и `weights/bs_unet_r34_v4.pt`
 (fp16, по 47 МБ; `encoder_weights="imagenet"` из smp — лицензия весов torchvision BSD-3; в git добавлены через `git add -f`),
 `weights/bs_stack.txt`, `weights/bs_lgbm.txt`, `weights/bs_lc_medians.json`, `weights/bs_decode.json`.
+**Кандидат v5 (многомасштабный BS, по умолчанию выключен):** `bs.variant: ms` в `configs/inference.yaml` или
+`--config configs/inference_bs_ms.yaml` — плюс UNet, обученные на масштабах 0.75 и 0.5 (OOF BS-части 0.4965 / 0.5116 против
+0.4912 / 0.5008; GPU 23.5 с, CPU 69 с; веса +97 МБ; обучение — этапы `ms_unet`, `ms_stack` в `train.py --module bs`;
+подробности и оговорки — `reports/bs_module.md` §4.11).
 Инференс настраивается в `configs/bs_inference.yaml` (`device: auto|cpu|cuda`, `use_stack`, `tta`, `tta_cpu`, `gpu_half`);
 без GPU автоматически используется CPU-путь. **TTA выключен на всех устройствах, UNet на GPU считается в fp32**: прирост
 от TTA на OOF всего +0.0043 / +0.0024 BS-части (< 0.005), зато результат не зависит от устройства — GPU- и CPU-файлы на

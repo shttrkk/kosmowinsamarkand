@@ -20,3 +20,17 @@ bs:
   lgbm_weights: weights/bs_lgbm.txt
   lc_medians: weights/bs_lc_medians.json
   decode_file: weights/bs_decode.json
+
+  # ---- варианты (bs.variant в configs/inference.yaml или отдельный конфиг; по умолчанию v4 — всё, что выше) ----
+  variants:
+    ms:   # КАНДИДАТ v5, многомасштабный: reports/bs_module.md §4.11. Включение: bs.variant: ms
+          # или `--config configs/inference_bs_ms.yaml`. OOF 0.4965 / 0.5116 против 0.4912 / 0.5008 у v4.
+      unet_weights:                         # база стека: среднее вероятностей
+        - weights/bs_unet_r34_cedice.pt     #   v1, 1×
+        - weights/bs_unet_r34_v4.pt         #   v4, 1×
+        - weights/bs_unet_r34_v4_s075.pt    #   v4, обучен на масштабе 0.75 (больше контекст)
+      aux_unet_weights:                     # p_burn — отдельные признаки стека, в среднее не входит
+        - weights/bs_unet_r34_v4_s050.pt    #   v4, обучен на масштабе 0.5
+      stack_weights: weights/bs_stack_ms.txt
+      stack_gate: 0.01
+      decode_file: weights/bs_decode_ms.json

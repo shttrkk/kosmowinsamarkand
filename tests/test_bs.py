@@ -257,6 +257,64 @@ def test_predictor_stack_cpu(tiny_checkpoint, tmp_path, monkeypatch):
     np.testing.assert_array_equal(a, b)
 
 
+def test_bs_variant_switch():
+    """bs.variant: по умолчанию v4; ms — пресет кандидата v5 из configs/bs_inference.yaml; явные ключи сильнее пресета."""
+    from firemon.models.bs.infer import load_bs_config
+
+    v4 = load_bs_config({})
+    assert v4["variant"] == "v4" and v4["stack_weights"] == "weights/bs_stack.txt" and float(v4["stack_gate"]) == 0.03
+    assert len(v4["unet_weights"]) == 2 and not v4.get("aux_unet_weights") and "variants" not in v4
+    ms = load_bs_config({"variant": "ms", "model": "unet"})
+    assert ms["variant"] == "ms" and ms["stack_weights"] == "weights/bs_stack_ms.txt" and float(ms["stack_gate"]) == 0.01
+    assert ms["decode_file"] == "weights/bs_decode_ms.json" and len(ms["unet_weights"]) == 3
+    assert ms["aux_unet_weights"] == ["weights/bs_unet_r34_v4_s050.pt"]
+    assert ms["tta"] is False and ms["gpu_half"] is False            # базовые настройки v4 сохраняются
+    over = load_bs_config({"variant": "ms", "stack_gate": 0.05})
+    assert float(over["stack_gate"]) == 0.05
+    with pytest.raises(ValueError):
+        load_bs_config({"variant": "nope"})
+    # общий конфиг по умолчанию — v4, отдельный — ms
+    from firemon.utils import REPO_ROOT, load_config
+
+    assert "variant" not in load_config(REPO_ROOT / "configs" / "inference.yaml")["bs"]
+    assert load_config(REPO_ROOT / "configs" / "inference_bs_ms.yaml")["bs"]["variant"] == "ms"
+
+
+def test_predictor_multiscale_aux_cpu(tiny_checkpoint, tmp_path, monkeypatch):
+    """Вариант ms на CPU: член базы на масштабе 0.75, доп. сеть 0.5× → признаки aux_* стека; форма, 0..3, детерминизм."""
+    import torch
+
+    lgb = pytest.importorskip("lightgbm")
+    from firemon.models.bs.predictor import BSPredictor
+    from firemon.models.bs.stack import stack_feature_names
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    ck = torch.load(tiny_checkpoint, map_location="cpu", weights_only=False)
+    paths = {}
+    for name, scale in (("s075", 0.75), ("s050", 0.5)):
+        paths[name] = tmp_path / f"bs_unet_tiny_{name}.pt"
+        torch.save({**ck, "scale": scale}, paths[name])
+    n_feat = len(stack_feature_names(n_aux=1))
+    assert n_feat == len(stack_feature_names()) + 4
+    rng = np.random.RandomState(0)
+    booster = lgb.train(dict(objective="multiclass", num_class=4, num_leaves=4, verbosity=-1, deterministic=True,
+                             num_threads=1, seed=42),
+                        lgb.Dataset(rng.normal(size=(400, n_feat)).astype(np.float32), rng.randint(0, 4, 400)), 3)
+    stack_path = tmp_path / "bs_stack_ms.txt"
+    booster.save_model(str(stack_path))
+    cfg = {"device": "cpu", "unet_weights": [str(tiny_checkpoint), str(paths["s075"])],
+           "aux_unet_weights": [str(paths["s050"])], "use_stack": True, "stack_weights": str(stack_path),
+           "stack_gate": 0.0, "num_threads": 2, "decode": {"t_burn": 0.5, "w": [1.0, 1.0, 1.0]}, "postprocess": {}}
+    pred = BSPredictor(cfg).load()
+    assert len(pred.models) == 2 and len(pred.aux_models) == 1 and pred.models[1]["scale"] == 0.75
+    chip = make_chip(12)
+    a, b = pred.predict(chip), pred.predict(chip)
+    assert a.shape == (512, 512) and a.dtype == np.uint8 and set(np.unique(a)) <= {0, 1, 2, 3}
+    np.testing.assert_array_equal(a, b)
+    with pytest.raises(FileNotFoundError):
+        BSPredictor({**cfg, "aux_unet_weights": [str(tmp_path / "nope.pt")]}).load()
+
+
 def test_predictor_cuda_request_falls_back(tiny_checkpoint, monkeypatch):
     import torch
 

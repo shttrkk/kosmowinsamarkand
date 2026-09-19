@@ -20,7 +20,15 @@ def load_bs_config(inference_cfg: dict | None = None) -> dict:
     """Секция `bs` из configs/bs_inference.yaml; ключи из секции `bs` общего inference.yaml её перекрывают."""
     path = REPO_ROOT / "configs" / "bs_inference.yaml"
     cfg = dict(load_config(path).get("bs", {})) if path.exists() else {}
-    cfg.update({k: v for k, v in (inference_cfg or {}).items() if k not in ("model", "dnbr_thresholds")})
+    variants = cfg.pop("variants", None) or {}
+    over = {k: v for k, v in (inference_cfg or {}).items() if k not in ("model", "dnbr_thresholds")}
+    variant = str(over.pop("variant", cfg.pop("variant", "v4")) or "v4")
+    if variant != "v4":  # пресет варианта (например ms — многомасштабный v5) поверх базовых настроек v4
+        if variant not in variants:
+            raise ValueError(f"bs.variant = {variant!r}: нет такого варианта, доступны {['v4'] + sorted(variants)}")
+        cfg.update(variants[variant])
+    cfg.update(over)  # явные ключи секции bs общего конфига сильнее пресета
+    cfg["variant"] = variant
     return cfg
 
 

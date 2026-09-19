@@ -1,0 +1,17 @@
+# То же, что configs/inference.yaml, но BS — вариант ms (кандидат v5, reports/bs_module.md §4.11):
+#   python inference.py --data-dir data/test --output out/submission_ms.csv --config configs/inference_bs_ms.yaml
+# Конфиг inference.py. Бэкенды моделей зарегистрированы в src/firemon/pipeline.py (AF_BACKENDS / BS_BACKENDS).
+seed: 42
+workers: 8               # потоки чтения чипов и расчёта признаков (перекрывается --workers); на результат не влияет
+
+af:
+  model: lgbm            # lgbm — LightGBM по пикселям-кандидатам (AF-17); rules — контекстное правило шага 0
+  fallback: rules        # чем заменить model, если он не поднялся (нет весов) — валидный submission важнее падения
+  weights_dir: weights   # af_lgbm_fold{0..4}.txt + af_lgbm_meta.json (порог подобран по OOF)
+  num_threads: 8         # потоки LightGBM predict; предсказание по строкам независимо → результат от числа не зависит
+
+bs:
+  variant: ms            # кандидат v5 (многомасштабный BS); в configs/inference.yaml по умолчанию v4
+  model: unet            # unet — BSPredictor (2×UNet + стек-LGBM), параметры в configs/bs_inference.yaml; rules — пороги dNBR
+  fallback: rules        # если веса weights/bs_* не найдены
+  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная (только для model: rules)

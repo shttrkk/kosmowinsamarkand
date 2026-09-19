@@ -12,7 +12,7 @@
 
 - Ожидаемый Score по OOF: 0.35·F1_af + BS-часть = 0.35·0.9682 + 0.4965 = **0.835** (group), 0.35·0.9597 + 0.5116 = **0.848** (temporal);
   против v4: 0.830 / 0.837, т.е. **+0.005…+0.011 Score**. На реальном тесте цифра будет ниже OOF (тест облачнее train).
-- Включение: `python inference.py --data-dir data/test --output out/submission_night_ms.csv --config configs/inference_bs_night.yaml`
+- Включение: `python inference.py --data-dir data/test --output out/submission_night_ms.csv --config configs/inference_bs_ms.yaml`
   (по умолчанию выключено; `weights/`, `configs/inference.yaml`, main не менялись). Веса: `weights_night_3/` (в git, 2 × 47 МБ + стек).
 - Инференс на data/test: код 0, валидатор OK (447 строк); **GPU 23.4–23.7 с** (AF 4.2 + BS 18.1), **CPU 68.8 с** (BS 63.5); повторный
   запуск на GPU и GPU против CPU — побайтно равные файлы. Против файла v4: совпало 98.2 % пикселей BS, IoU контуров 0.877,

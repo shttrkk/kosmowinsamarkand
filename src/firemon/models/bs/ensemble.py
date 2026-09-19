@@ -78,15 +78,20 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--stack", default=None, help="тег стека: постобработка подбирается для него (финальная модель)")
     ap.add_argument("--no-write", action="store_true", help="не перезаписывать weights/bs_decode.json")
     ap.add_argument("--skip-weights", action="store_true", help="пропустить перебор весов ансамбля UNet+LGBM")
+    ap.add_argument("--stack-only", action="store_true", help="только декодирование/постобработка для --stack (OOF UNet не нужны)")
+    ap.add_argument("--decode-name", default="bs_decode.json", help="имя файла декодирования в каталоге весов")
     args = ap.parse_args(argv)
 
     chips = load_chips(args.data_dir)
     ids = [c["chip_id"] for c in chips]
     gts = np.stack([c["mask"] for c in chips])
     splits = get_splits(ids)
-    pu_plain = _load_pair(args.unet)
-    pu_tta = {s: np.load(OOF / f"{args.unet}_{s}_tta.npy", mmap_mode="r") for s in ("group", "temporal")}
-    pl = _load_pair(f"lgbm_{args.lgbm}")
+    if args.stack_only and not args.stack:
+        raise SystemExit("--stack-only требует --stack")
+    pu_plain = None if args.stack_only else _load_pair(args.unet)
+    pu_tta = None if args.stack_only else {s: np.load(OOF / f"{args.unet}_{s}_tta.npy", mmap_mode="r")
+                                           for s in ("group", "temporal")}
+    pl = None if args.stack_only else _load_pair(f"lgbm_{args.lgbm}")
     ps = _load_pair(f"stack_{args.stack}") if args.stack else None
     res: dict = {"unet": args.unet, "lgbm": args.lgbm, "stack": args.stack, "weights": {}, "post": {}}
 
@@ -94,19 +99,24 @@ def main(argv: list[str] | None = None) -> dict:
         log.info("%-26s group: %s", name, fmt(r["group"]))
         log.info("%-26s temp.: %s", name, fmt(r["temporal"]))
 
-    res["unet_no_tta"] = evaluate_variant(pu_plain, None, 1.0, gts, splits)
-    show("UNet без TTA", res["unet_no_tta"])
+    if pu_plain is not None:
+        res["unet_no_tta"] = evaluate_variant(pu_plain, None, 1.0, gts, splits)
+        show("UNet без TTA", res["unet_no_tta"])
     if pl is not None:
         res["lgbm_only"] = evaluate_variant(pl, None, 1.0, gts, splits)
         show("LGBM", res["lgbm_only"])
     # 1) веса ансамбля UNet(TTA)+LGBM
     grid = [1.0] if pl is None or args.skip_weights else [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.3]
+    if args.stack_only:
+        grid = []
     for w in grid:
         res["weights"][str(w)] = r = evaluate_variant(pu_tta, pl, w, gts, splits)
         show(f"UNet+TTA w_unet={w}", r)
-    ref = res["weights"]["1.0"]
-    best_w = max(grid, key=lambda w: min(res["weights"][str(w)][s]["bs_part"] - ref[s]["bs_part"]
-                                         for s in ("group", "temporal")))
+    best_w = 1.0
+    if grid:
+        ref = res["weights"]["1.0"]
+        best_w = max(grid, key=lambda w: min(res["weights"][str(w)][s]["bs_part"] - ref[s]["bs_part"]
+                                             for s in ("group", "temporal")))
     res["best_w_unet"] = best_w
     log.info("лучший w_unet = %s", best_w)
 
@@ -144,7 +154,7 @@ def main(argv: list[str] | None = None) -> dict:
         dec = {"decode": {"t_burn": cur["decode_group"]["t_burn"], "w": cur["decode_group"]["w"]},
                # nonempty_min_px — структурный приор набора (в каждом BS-чипе есть пожар), по OOF не подбирается
                "postprocess": {**post, "nonempty_min_px": 25}, "ens_weights": {"unet": best_w, "lgbm": round(1.0 - best_w, 3)}}
-        (weights_dir() / "bs_decode.json").write_text(json.dumps(dec, indent=1), encoding="utf-8")
+        (weights_dir() / args.decode_name).write_text(json.dumps(dec, indent=1), encoding="utf-8")
     log.info("→ %s | decode %s | post %s", name, res["final_decode"], post)
     return res
 

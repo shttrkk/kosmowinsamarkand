@@ -24,7 +24,7 @@ def main() -> int:
     ap.add_argument("--no-log", action="store_true", help="не дописывать строку в reports/experiments.md")
     ap.add_argument("--rebuild-cache", action="store_true", help="пересчитать кэш признаков")
     ap.add_argument("--bs-stages", nargs="*", default=None,
-                    help="этапы BS: rules lgbm unet stack ensemble (по умолчанию все)")
+                    help="этапы BS: rules lgbm unet stack ensemble ms_unet ms_stack (по умолчанию все; ms_* — вариант v5)")
     ap.add_argument("--weights-dir", default="weights",
                     help="BS: куда писать веса (для другого каталога кэш и итоги тоже отдельные — проверка воспроизводимости)")
     ap.add_argument("--bs-unet-loss", default=None, choices=["ce_dice", "focal_dice", "lovasz", "ce_lovasz"],

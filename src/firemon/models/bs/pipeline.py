@@ -7,6 +7,9 @@
             weights/bs_unet_<tag>.pt; усреднённые OOF-вероятности → data/cache/bs_oof/avg14_*_tta.npy
   stack     LGBM 2-го уровня по усреднённым OOF UNet (без TTA): CV + финальная → weights/bs_stack.txt
   ensemble  веса ансамбля, декодирование, постобработка → weights/bs_decode.json
+  ms_unet   (v5) UNet v4 на масштабах 0.75 и 0.5: CV + full → weights/bs_unet_r34_v4_s075.pt, …_s050.pt (нужен этап unet)
+  ms_stack  (v5) 5-канальный OOF (среднее v1, v4, v4@0.75 + p_burn сети 0.5×) → стек с воротами 0.01 → weights/bs_stack_ms.txt;
+            декодирование/постобработка → weights/bs_decode_ms.json. Включение на инференсе: bs.variant: ms
 Итоговые цифры всех этапов → reports/bs_results.json (из него собирается reports/bs_module.md).
 """
 from __future__ import annotations
@@ -19,7 +22,12 @@ from ...utils import REPO_ROOT, get_logger, seed_everything
 from .common import cache_dir, evaluate_masks, fmt, get_splits, load_chips
 
 log = get_logger("bs.pipeline")
-STAGES = ["rules", "lgbm", "unet", "stack", "ensemble"]
+STAGES = ["rules", "lgbm", "unet", "stack", "ensemble", "ms_unet", "ms_stack"]
+# ms_* — многомасштабный вариант (кандидат v5): UNet v4, обученные на масштабах 0.75 и 0.5 (больше контекст → лучше выбор
+# «своего» события); база стека = среднее v1, v4 (1×) и v4@0.75; p_burn сети 0.5× — доп. признаки стека; ворота 0.01.
+MS_UNETS = {"r34_v4_s075": 0.75, "r34_v4_s050": 0.5}   # тег → масштаб входа; каналы v4
+MS_BASE, MS_AUX = ["r34_cedice", "r34_v4", "r34_v4_s075"], ["r34_v4_s050"]
+MS_OOF_TAG, MS_STACK_TAG, MS_GATE, MS_FRAC = "ms_base_aux", "ms", "0.01", "0.3"
 
 # финальная конфигурация (выбрана по экспериментам, см. reports/experiments.md)
 UNETS = {"r34_cedice": "v1", "r34_v4": "v4"}   # тег → набор каналов; вероятности двух сетей усредняются
@@ -105,6 +113,22 @@ def run(data_dir: str, stages: list[str] | None = None, weights_dir: str | None 
     if "ensemble" in stages:
         out["ensemble"] = ensemble.main(["--data-dir", data_dir, "--unet", "r34_cedice", "--lgbm", "main",
                                          "--stack", STACK_TAG])
+    if "ms_unet" in stages:
+        for tag, scale in MS_UNETS.items():
+            for split in ("group", "temporal", "full"):
+                r = unet.main(["--data-dir", data_dir, "--split", split, "--tag", tag, "--channels", "v4",
+                               "--scale", str(scale), *UNET_ARGS])
+                out[f"unet_{tag}_{split}"] = {k: v for k, v in r.items() if k != "history"}
+    if "ms_stack" in stages:
+        for split in ("group", "temporal"):
+            base = sum(np.load(OOF / f"{t}_{split}.npy").astype(np.float32) for t in MS_BASE) / len(MS_BASE)
+            aux = [(1.0 - np.load(OOF / f"{t}_{split}.npy")[:, 0].astype(np.float32))[:, None] for t in MS_AUX]
+            np.save(OOF / f"{MS_OOF_TAG}_{split}.npy", np.concatenate([base, *aux], axis=1).astype(np.float16))
+        common = ["--data-dir", data_dir, "--unet", MS_OOF_TAG, "--unet-suffix", "", "--gate", MS_GATE, "--frac", MS_FRAC]
+        out["ms_stack"] = stack.main([*common, "--stage", "cv", "--tag", MS_STACK_TAG])
+        stack.main([*common, "--stage", "full", "--rounds", str(STACK_ROUNDS_FULL), "--out-name", "bs_stack_ms.txt"])
+        out["ms_ensemble"] = ensemble.main(["--data-dir", data_dir, "--stack", MS_STACK_TAG, "--stack-only",
+                                            "--decode-name", "bs_decode_ms.json"])
     path = REPO_ROOT / "reports" / f"bs_results{suffix}.json"
     prev = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     prev.update(out)

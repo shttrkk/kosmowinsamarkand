@@ -216,15 +216,16 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--drop-unet", action="store_true", help="абляция: без признаков UNet (только ворота)")
     ap.add_argument("--drop-feats", nargs="*", default=None, help="абляция: исключить признаки по именам")
     ap.add_argument("--gate", type=float, default=None, help="порог ворот p_burn UNet (по умолчанию GATE)")
+    ap.add_argument("--out-name", default="bs_stack.txt", help="имя файла финального стека в каталоге весов")
     ap.add_argument("--leaves", type=int, default=None)
     ap.add_argument("--gate-rule", action="store_true", help="ворота: p_burn > gate ИЛИ rule_sev > 0")
     ap.add_argument("--ordinal", action="store_true", help="три бинарных стекера P(sev ≥ k) вместо multiclass")
     ap.add_argument("--extra-groups", nargs="*", default=None, help=f"доп. группы признаков из {OPTIONAL_GROUPS}")
     args = ap.parse_args(argv)
     seed_everything(42, with_torch=False)
-    if args.gate is not None:  # эксперименты: функции берут порог из значений по умолчанию
-        for fn in (stack_matrix, predict_stack):
-            fn.__defaults__ = tuple(args.gate if isinstance(d, float) else d for d in fn.__defaults__)
+    gate = GATE if args.gate is None else float(args.gate)  # функции берут порог из значений по умолчанию;
+    for fn in (stack_matrix, predict_stack):                 # выставляем всегда — вызовы в одном процессе независимы
+        fn.__defaults__ = tuple(gate if isinstance(d, float) else d for d in fn.__defaults__)
     GATE_RULE[0] = bool(args.gate_rule)
     if args.leaves:
         STACK_PARAMS["num_leaves"] = args.leaves
@@ -234,7 +235,7 @@ def main(argv: list[str] | None = None):
     pu = {s: np.load(OOF / f"{args.unet}_{s}{args.unet_suffix}.npy", mmap_mode="r") for s in ("group", "temporal")}
     if args.stage == "cv":
         return run_cv(chips, pu, args.tag or args.unet, args.rounds, args.frac, args.drop_unet, args.drop_feats, args.ordinal)
-    train_full(chips, pu["group"], args.rounds, args.frac, weights_dir() / "bs_stack.txt")
+    train_full(chips, pu["group"], args.rounds, args.frac, weights_dir() / args.out_name)
     return None
 
 
