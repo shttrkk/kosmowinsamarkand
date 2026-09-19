@@ -79,10 +79,16 @@
     style: (f) => ({ color: f.properties.kind === 'bs' ? '#19a386' : '#9aa7b4', weight: f.properties.kind === 'bs' ? 1.2 : .6,
                      fill: false, opacity: .8 }) });
   let scarMode = 'severity';
+  let outlineReady = false;           // контур события (объединение полигонов) посчитан для текущего запроса
+  const outlineFailed = new Set();    // события, у которых объединение полигонов упало: общего контура у них нет
+  const eventKey = (f) => f.properties.fire_event_id || f.properties.chip_id;
   const scarStyle = (f) => {
     const c = SEV_COLOR[f.properties.severity_class] || '#888';
-    return scarMode === 'severity' ? { color: c, weight: .8, opacity: 1, fillColor: c, fillOpacity: .45 }
-                                   : { color: c, weight: 0, opacity: 0, fillColor: c, fillOpacity: 0 };
+    if (scarMode === 'severity') return { color: c, weight: .8, opacity: 1, fillColor: c, fillOpacity: .45 };
+    // «только контур»: гари не должны исчезать. Пока общего контура события нет (ещё считается, запрос слишком большой
+    // или объединение именно этого события упало) — рисуем границы самих полигонов степеней без заливки
+    if (!outlineReady || outlineFailed.has(eventKey(f))) return { color: OUTLINE_COLOR, weight: 1, opacity: 1, fillColor: c, fillOpacity: 0 };
+    return { color: c, weight: 0, opacity: 0, fillColor: c, fillOpacity: 0 };
   };
   const scarsLayer = L.geoJSON(null, { renderer: rScars, style: scarStyle });
   const outlineLayer = L.geoJSON(null, { renderer: rOutline, interactive: false,
@@ -219,16 +225,13 @@
   segBind('basemap', (v) => setBasemap(v));
   segBind('scar-mode', (v) => { scarMode = v; segSet('scar-mode', v); applyScarMode(); });
 
-  let outlineReady = false;
   function restack() {  // снизу вверх: гари → контур события → термоточки
     if (map.hasLayer(outlineLayer)) outlineLayer.bringToFront();
     if (map.hasLayer(hotLayer)) hotLayer.bringToFront();
   }
-  function applyScarMode() {
-    scarsLayer.setStyle(scarStyle);
-    // «только контур» без посчитанного контура события (слишком большой запрос) → границы самих полигонов
-    if (scarMode === 'outline' && !outlineReady) scarsLayer.setStyle({ color: OUTLINE_COLOR, weight: 1, opacity: 1, fillOpacity: 0 });
-  }
+  // запасной вариант «границы самих полигонов» (нет общего контура события) — внутри scarStyle: он же используется
+  // при resetStyle после наведения, поэтому границы не пропадают и после hover
+  function applyScarMode() { scarsLayer.setStyle(scarStyle); }
 
   const source = () => ($('source-toggle').checked ? 'pred' : 'gt');
   function setSource(v) {
@@ -240,12 +243,12 @@
 
   // ── контур события: объединение полигонов одного пожара (severity_class 0 в терминах справки) ──
   function buildOutline(features, token) {
-    outlineLayer.clearLayers(); outlineReady = false;
+    outlineLayer.clearLayers(); outlineReady = false; outlineFailed.clear();
     if (!features.length || typeof polygonClipping === 'undefined') return;
     if (features.length > MAX_OUTLINE_SCARS) { applyScarMode(); return; }
     const groups = new Map();
     features.forEach((f) => {
-      const k = f.properties.fire_event_id || f.properties.chip_id;
+      const k = eventKey(f);
       const g = f.geometry, polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(...polys);
@@ -254,12 +257,18 @@
     (function next(i) {
       if (token !== queryToken) return;  // пришёл новый запрос
       if (i >= keys.length) { outlineReady = true; applyScarMode(); restack(); return; }
+      // каждое событие объединяется отдельно: сбой одного (polygon-clipping на части геометрий бросает «Unable to complete
+      // output ring…») не затрагивает остальные; для него вместо общего контура остаются границы исходных полигонов (scarStyle)
       try {
         const polys = groups.get(keys[i]);
         const merged = polygonClipping.union(polys[0], ...polys.slice(1));
         outlineLayer.addData({ type: 'Feature', properties: { fire_event_id: keys[i], severity_class: 0 },
           geometry: { type: 'MultiPolygon', coordinates: merged } });
-      } catch (e) { /* вырожденная геометрия — событие остаётся без общего контура */ }
+      } catch (e) {
+        outlineFailed.add(keys[i]);
+        console.warn(`[firemon] контур события ${keys[i]}: объединение полигонов не удалось — показаны границы исходных полигонов.`,
+          e && e.message ? e.message : e);
+      }
       setTimeout(() => next(i + 1), 0);
     })(0);
   }
@@ -356,7 +365,7 @@
 
   function clearAll() {
     queryToken++;
-    scarsLayer.clearLayers(); hotLayer.clearLayers(); outlineLayer.clearLayers(); outlineReady = false;
+    scarsLayer.clearLayers(); hotLayer.clearLayers(); outlineLayer.clearLayers(); outlineReady = false; outlineFailed.clear();
     map.closePopup(); setArea(null);
     $('summary').hidden = true; $('empty').hidden = true;
     $('cnt-hot').textContent = ''; $('cnt-scars').textContent = '';
