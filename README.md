@@ -236,14 +236,13 @@ python inference.py --data-dir /path/to/test --output /path/to/out/submission.cs
 
 GPU-образ: `docker build -f Dockerfile.gpu -t firemon:gpu .` и
 `docker run --rm --gpus all -v /path/to/test:/data:ro -v /path/to/out:/out firemon:gpu --data-dir /data --output /out/submission.csv`
-(нужен NVIDIA Container Toolkit; ожидаемое время то же, ≈ 20–25 с; без `--gpus all` образ сам работает на CPU). **Не тестировался**:
-собрать его при аудите не удалось (обрыв загрузки базового образа `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`, затем нехватка места
-на диске — `reports/tasklog/h100_readiness.md`, п. 16); написан по тому же шаблону, что проверенный CPU-образ. Если нет Python 3.12 и
+(нужен NVIDIA Container Toolkit; ожидаемое время то же, ≈ 20–25 с; без `--gpus all` образ сам работает на CPU). **`Dockerfile.gpu` написан, но не собран из-за нехватки места на машине разработки; проверен CPU-образ**
+(`reports/tasklog/h100_readiness.md`, п. 16); написан по тому же шаблону, что проверенный CPU-образ. Если нет Python 3.12 и
 GPU-образ не собрался — CPU-образ выше даёт **побайтно тот же файл** за ≈ 69 с.
 
 ## 8. Веса
 
-Веса лежат **в git** в `weights/` — 20 файлов (+ `.gitkeep`), всего **204.8 МБ**: AF 5.0 МБ, BS ≈ 200 МБ (четыре UNet по 49.3 МБ = 47.0 МиБ — каждый меньше лимитов 50 МиБ / 100 МБ; `bs_lgbm.txt` 4.8 МБ, три стека по 2.6 МБ, json-файлы — килобайты). Если репозиторий передан архивом `git archive`, веса идут отдельным `SAMARKAND_fire-monitoring_weights_v1.0-final.zip` — распаковать в корень репозитория (получится `weights/…`). Отдельно скачивать ничего не нужно; после `git clone` файлы на диске совпадают с закоммиченными (сверено по blob-хэшам при слиянии):
+Веса лежат **в git** в `weights/` — 20 файлов (+ `.gitkeep`), всего **204.8 МБ**: AF 5.0 МБ, BS ≈ 200 МБ (четыре UNet по 49.3 МБ = 47.0 МиБ — каждый меньше лимитов 50 МиБ / 100 МБ; `bs_lgbm.txt` 4.8 МБ, три стека по 2.6 МБ, json-файлы — килобайты). При передаче архивами: `SAMARKAND_fire-monitoring_v1.0-final.zip` (`git archive` тега `v1.0-final`) уже содержит `weights/`; тот же каталог продублирован отдельным `SAMARKAND_fire-monitoring_weights_v1.0-final.zip` — если основной архив пришёл без весов (лимит размера), распакуйте его в корень репозитория: `Expand-Archive SAMARKAND_fire-monitoring_weights_v1.0-final.zip -DestinationPath .` / `unzip … -d .` (получится `weights/…`), проверка — `python inference.py …` не пишет в лог «веса не найдены». Отдельно скачивать ничего не нужно; после `git clone` файлы на диске совпадают с закоммиченными (сверено по blob-хэшам при слиянии):
 
 ```
 weights/
