@@ -58,10 +58,12 @@ Public финала на 0.004–0.016 ниже локальных оценок 
 
 - ОС: Windows 10/11 или Linux x86_64 (glibc ≥ 2.28: Debian 11+, Ubuntu 20.04+). Разработка велась на Windows 10,
   Linux проверен в Docker (`python:3.12-slim`).
-- Python **3.12** (проверено на 3.12.7; `pyproject.toml`: `>=3.12,<3.14`). Зафиксированные версии пакетов (numpy 2.5, pandas 3.0 …)
-  имеют колёса только для Python ≥ 3.12: на Linux x86_64 `requirements.txt` разрешается для 3.12 и 3.13 и **не ставится на 3.10 / 3.11**
-  (проверено `pip install --dry-run --python-version … --only-binary=:all:`). **Если на машине Python 3.10, 3.11 или 3.13 — используйте Docker**
-  (раздел 7): образ несёт свой Python 3.12 и не зависит от системного.
+- Python **3.12** — основной вариант (проверено на 3.12.7; `pyproject.toml`: `>=3.10,<3.13`). Зафиксированные версии `requirements.txt`
+  (numpy 2.5, pandas 3.0 …) имеют колёса только для Python ≥ 3.12 и **не ставятся на 3.10 / 3.11**. Для них есть страховочный набор
+  **`requirements-py310.txt`** (GPU) / `requirements-py310-cpu.txt` (CPU): те же torch 2.6.0, LightGBM 4.7.0 и smp 0.5.0, а numpy 2.2.6,
+  pandas 2.2.3, scipy 1.15.3, rasterio 1.4.4 и др. — ближайшие версии с колёсами под 3.10–3.11. Проверено на Python 3.10.21: `inference.py`
+  даёт **побайтно тот же файл**, что основной набор, `pytest` зелёный (`reports/tasklog/h100_readiness.md`, п. 18); для 3.11 проверено
+  разрешение зависимостей (Linux x86_64). Python 3.13 — Docker (раздел 7): образ несёт свой Python 3.12.
 - GPU **не обязательна**: на GPU (RTX 4070) полный инференс ≈ 23.5 с, без GPU ≈ 57 с (`--device cpu`); **GPU, CPU и Docker дают побайтно один
   файл**. Нужен драйвер NVIDIA **≥ 550** (CUDA 12.4): `requirements.txt` ставит `torch==2.6.0+cu124` из индекса
   `https://download.pytorch.org/whl/cu124` — CUDA-библиотеки приходят вместе с колесом, системный CUDA Toolkit не нужен (на Linux и обычный
@@ -100,10 +102,21 @@ pip install -r requirements-cpu.txt      # или requirements.txt при нал
 export PYTHONPATH=$PWD/src               # нужно только для команд вида `python -m firemon.…`
 ```
 
+**Python 3.10 / 3.11** (если 3.12 поставить нельзя и Docker недоступен) — те же шаги, другой файл зависимостей:
+
+```bash
+python3.10 -m venv .venv && source .venv/bin/activate        # Windows: py -3.10 -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements-py310.txt        # GPU (CUDA 12.4);  без GPU: pip install -r requirements-py310-cpu.txt
+```
+
+Результат инференса побайтно тот же; обучение и сервис на этом наборе отдельно не перепроверялись (кроме `pytest`).
+
 `pip install -e .` **не нужен**: `inference.py`, `train.py`, скрипты и тесты сами добавляют `src/` в `sys.path`
 (переменная `PYTHONPATH` требуется лишь для `python -m firemon.…`; альтернатива ей — `pip install -e .`).
 Файлы зависимостей: `requirements-base.txt` (всё, кроме torch, точные версии) подключается из `requirements.txt`
-(torch cu124) и `requirements-cpu.txt` (torch CPU); `requirements.lock.txt` — полный снимок окружения разработки.
+(torch cu124) и `requirements-cpu.txt` (torch CPU); так же устроены `requirements-py310-base.txt` ← `requirements-py310.txt` /
+`requirements-py310-cpu.txt` для Python 3.10–3.11; `requirements.lock.txt` — полный снимок окружения разработки.
 
 ## 5. Структура входных данных
 

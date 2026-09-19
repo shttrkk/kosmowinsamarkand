@@ -1,0 +1,5 @@
+# Python 3.10 / 3.11, torch с CUDA 12.4 (те же torch 2.6.0 / torchvision 0.21.0, что в requirements.txt).
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+-r requirements-py310-base.txt

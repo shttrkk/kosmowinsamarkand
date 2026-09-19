@@ -1,0 +1,30 @@
+# Страховочный набор для Python 3.10 / 3.11 (основной — requirements-base.txt, Python 3.12).
+# Версии numpy 2.5 / pandas 3.0 / scipy 1.18 и др. из основного набора не имеют колёс под 3.10–3.11, поэтому здесь —
+# ближайшие версии с колёсами cp310/cp311 (Windows и manylinux x86_64; подобраны `uv pip compile --python-version 3.10`).
+# Не ставить напрямую: см. requirements-py310.txt (GPU, CUDA 12.4) и requirements-py310-cpu.txt (CPU).
+# Проверка — reports/tasklog/h100_readiness.md, п. 18.
+numpy==2.2.6
+pandas==2.2.3
+scipy==1.15.3
+scikit-image==0.25.2
+scikit-learn==1.7.2
+lightgbm==4.7.0
+segmentation-models-pytorch==0.5.0
+albumentations==2.0.8
+
+rasterio==1.4.4
+tifffile==2025.5.10
+imagecodecs==2025.3.30
+geopandas==1.1.4
+shapely==2.1.2
+pyproj==3.7.1
+
+fastapi==0.141.1
+uvicorn==0.53.0
+httpx==0.28.1
+
+PyYAML==6.0.3
+tqdm==4.70.1
+matplotlib==3.10.9
+pypdf==6.19.0
+pytest==9.1.1
