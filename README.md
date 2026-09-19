@@ -80,6 +80,7 @@ python -m compileall -q src inference.py
 | есть GPU NVIDIA (драйвер ≥ 550), Python 3.12 | `requirements.txt` (torch 2.6.0 + CUDA 12.4, ≈ 2.5 ГБ загрузки) |
 | нет GPU, Python 3.12 | `requirements-cpu.txt` (те же версии, torch CPU, ≈ 0.2 ГБ) |
 | Python 3.10 или 3.11 | `requirements-py310.txt` (GPU) / `requirements-py310-cpu.txt` (CPU) |
+| macOS (Apple Silicon, macOS 14+), Python 3.12 | `requirements-macos.txt` — см. подраздел «macOS» ниже; `requirements-cpu.txt` на Mac не ставится |
 | Python 3.13 или ставить пакеты нельзя | Docker, раздел 3 |
 
 Версии зафиксированы точно. Основной набор (numpy 2.5, pandas 3.0 …) имеет колёса только для Python ≥ 3.12; набор `py310` —
@@ -201,6 +202,49 @@ RLE с нумерацией с 1 построчно (пары «start length» �
 ≈ 3 ГБ бинарных модулей torch / CUDA. Второй и следующие запуски стабильны — 22–23 с. Подробности — `reports/speed.md`.
 
 ---
+
+### macOS (Apple Silicon) — те же 7 шагов
+
+Требуется **Apple Silicon (M1 и новее) и macOS 14+**: у зафиксированных версий rasterio и pyproj колёса для Mac собраны только под
+macOS 14 (arm64), а у torch 2.6.0 нет сборок для Intel-Mac. На Intel-Mac и на более старых macOS используйте Docker (раздел 3).
+**На реальном Mac решение не запускалось** — у команды его нет; проверено только, что `requirements-macos.txt` полностью разрешается
+для `macosx_14_0_arm64` / Python 3.12 (`pip install --dry-run --platform … --only-binary=:all:`). Код платформенно-нейтрален
+(на Linux проверен в Docker), GPU на Mac не используется.
+
+```bash
+# 1) Python 3.12: Homebrew или установщик с python.org. Вне venv команды `python` в macOS нет — используйте python3.12
+brew install python@3.12
+
+# 2) код и окружение
+cd fire-monitoring
+python3.12 -m venv .venv && source .venv/bin/activate && python -m pip install --upgrade pip
+
+# 3) зависимости. НЕ requirements-cpu.txt: сборок torch с суффиксом +cpu для macOS не существует.
+#    requirements-macos.txt — обычный torch 2.6.0 с PyPI + те же точные версии остальных пакетов
+pip install -r requirements-macos.txt && python -m compileall -q src inference.py
+#    если LightGBM при импорте сообщает, что не найден libomp:  brew install libomp
+
+# 4) проверка установки (та же команда, что для Linux; на Mac напечатает «2.6.0 False» — CUDA нет, это нормально)
+python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"
+
+# 5) тестовые данные — как в шаге 5 выше: mkdir -p data && tar -xf /path/to/fire-test-renamed.tar -C data
+
+# 6) инференс на CPU
+python inference.py --data-dir data/test --output submission.csv --device cpu
+
+# 7) проверка файла и сравнение с эталоном
+python scripts/check_submission.py submission.csv
+shasum -a 256 submission.csv submissions/submission_v5_final.csv
+
+# сервис — та же команда, что на других системах
+python -m uvicorn service.app:app --port 8000
+```
+
+Ожидаемое время инференса на Mac — **1–3 минуты** (оценка: на i5-13600KF без GPU — 57 с; на Mac не измерялось). На Linux и Windows
+CPU-файл **побайтно совпадает** с GPU-версией и со сданным `submissions/submission_v5_final.csv`; на macOS это **не проверено** — другая
+архитектура и другая BLAS-библиотека могут дать отличие в единичных пикселях (на метрику не влияет). Сравните sha256: если он равен
+`784fe474…`, совпадение полное; если нет — `python scripts/compare_submissions.py submission.csv submissions/submission_v5_final.csv`
+покажет, сколько пикселей отличается.
 
 ## 2. Сервис — 3 шага
 
@@ -386,6 +430,7 @@ inference.py            единственная точка входа инфе�
 train.py                обучение: python train.py --module af|bs|all
 Dockerfile              CPU-образ (проверен);  Dockerfile.gpu — GPU-образ (написан, не собран);  .dockerignore
 requirements.txt        Python 3.12, torch + CUDA 12.4;  requirements-cpu.txt — torch CPU;  requirements-base.txt — всё, кроме torch
+requirements-macos.txt  macOS (Apple Silicon): обычный torch 2.6.0 с PyPI + requirements-base.txt
 requirements-py310*.txt набор для Python 3.10–3.11;  requirements.lock.txt — полный снимок окружения разработки
 pyproject.toml, LICENSE (MIT), .gitignore, .gitattributes, CLAUDE.md (памятка для разработки: факты о данных, соглашения)
 configs/                inference.yaml (v5 по умолчанию), inference_bs_base.yaml (быстрый режим v4), bs_inference.yaml,           < 0.1 МБ
@@ -472,6 +517,8 @@ UNet выбирает регион, бустинг восстанавливае�
 - **Обучение BS не повторяется в пределах ±0.005** (до 0.02): причина найдена и исправлена в коде, но поставляемые веса обучены
   до исправления (раздел 4).
 - **H100 не проверялась**, оценка ≈ 19–22 с — расчётная. **GPU-образ Docker не собран.** Проверены venv на GPU и CPU и CPU-образ.
+- **macOS не проверялась на реальной машине**: `requirements-macos.txt` разрешается для Apple Silicon с macOS 14+ (Python 3.12), для Intel-Mac
+  колёс torch 2.6.0 нет — там только Docker. Побайтное совпадение файла на Mac не подтверждено (возможны отличия в единичных пикселях).
 - **Порог 30 с** выдерживается на свободной машине с GPU с запасом ≈ 7 с; под посторонней нагрузкой и в самом первом запуске в
   свежем окружении (23–42 с) — не гарантирован. Запасной вариант — быстрый режим v4.
 - Официальный скрипт метрики и baseline организаторы не выдавали: метрика реализована по тексту ТЗ (`tests/test_metrics.py`),

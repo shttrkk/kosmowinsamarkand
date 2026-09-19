@@ -1,0 +1,5 @@
+# macOS (Apple Silicon): CUDA на Mac нет, а сборок torch с суффиксом +cpu для macOS не существует —
+# ставится обычный torch той же версии с PyPI. Остальное — те же точные версии, что на Linux/Windows.
+torch==2.6.0
+torchvision==0.21.0
+-r requirements-base.txt
