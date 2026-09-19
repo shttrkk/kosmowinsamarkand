@@ -42,7 +42,7 @@ def candidate_paths(text: str) -> set[str]:
         if tok.endswith("/"):
             if tok.startswith(TOP_LEVEL) or tok in TOP_LEVEL:
                 out.add(tok)
-        elif tok.lower().endswith(EXTENSIONS) and ("/" in tok or tok in ("README.md", "CLAUDE.md", "Dockerfile.gpu")):
+        elif tok.lower().endswith(EXTENSIONS) and ("/" in tok or tok in ("README.md", "Dockerfile.gpu")):
             out.add(tok)
         elif tok in ("Dockerfile", "inference.py", "train.py", "requirements.txt", "pyproject.toml"):
             out.add(tok)

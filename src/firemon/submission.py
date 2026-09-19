@@ -1,4 +1,4 @@
-"""Сборка и валидация submission.csv строго по шаблону организаторов (CLAUDE.md §5).
+"""Сборка и валидация submission.csv строго по шаблону организаторов (постановка кейса, раздел «Формат submission.csv»).
 
 CLI: python -m firemon.submission --validate out/submission.csv --sample baseline/sample_submission.csv --data-dir data/test
 """

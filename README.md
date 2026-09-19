@@ -454,7 +454,7 @@ Dockerfile              CPU-образ (проверен);  Dockerfile.gpu — G
 requirements.txt        Python 3.12, torch + CUDA 12.4;  requirements-cpu.txt — torch CPU;  requirements-base.txt — всё, кроме torch
 requirements-macos.txt  macOS (Apple Silicon): обычный torch 2.6.0 с PyPI + requirements-base.txt
 requirements-py310*.txt набор для Python 3.10–3.11;  requirements.lock.txt — полный снимок окружения разработки
-pyproject.toml, LICENSE (MIT), .gitignore, .gitattributes, CLAUDE.md (памятка для разработки: факты о данных, соглашения)
+pyproject.toml, LICENSE (MIT), .gitignore, .gitattributes
 configs/                inference.yaml (v5 по умолчанию), inference_bs_base.yaml (быстрый режим v4), bs_inference.yaml,           < 0.1 МБ
                         af_lgbm.yaml, folds_af.csv, folds_bs.csv (фиксированная валидация)
 weights/                4 UNet-resnet34 по 47 МиБ, 5 моделей LightGBM для AF, стеки BS, json с порогами и постобработкой            205 МБ
