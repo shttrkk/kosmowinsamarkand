@@ -6,7 +6,7 @@ README выполнялись буквально, в PowerShell, с активи
 
 | Шаг README | Команда | Результат |
 |---|---|---|
-| 1. Код | `git clone <локальный путь> …` (в README — `{{REPO_URL}}`) | код 0; в корне только `configs eda reports scripts service src submissions tests weights` + файлы проекта и `LICENSE` |
+| 1. Код | `git clone <локальный путь> …` | код 0; в корне только `configs eda reports scripts service src submissions tests weights` + файлы проекта и `LICENSE` |
 | 2. Окружение | `py -3.12 -m venv .venv` → `.\.venv\Scripts\Activate.ps1` → `python -m pip install --upgrade pip` → `$env:PYTHONIOENCODING = 'utf-8'` | код 0 |
 | 3. Установка | `pip install -r requirements.txt` → `python -m compileall -q src inference.py` | код 0, 157 с |
 | 4. Проверка установки | `python -c "import torch, lightgbm, rasterio, segmentation_models_pytorch as smp; print(torch.__version__, torch.cuda.is_available())"` | `2.6.0+cu124 True` |

@@ -8,7 +8,7 @@
 валидации и 0.8478 на 2024 годе. Полный инференс 269 тестовых чипов — **≈ 22–23 с на GPU**, ≈ 57 с на CPU.
 
 **Воспроизводимость.** GPU, CPU и Docker дают **побайтно один и тот же файл** — он лежит в репозитории:
-`submissions/submission_v5_final.csv`. Репозиторий: {{REPO_URL}}, релиз — тег `v1.0-final`.
+`submissions/submission_v5_final.csv`. Релиз — тег `v1.0-final` репозитория.
 
 ![Схема пайплайна](reports/figures/pipeline.png)
 
@@ -30,18 +30,18 @@
 Linux:
 
 ```bash
-git clone {{REPO_URL}} fire-monitoring
+# клонируйте репозиторий в каталог fire-monitoring (или распакуйте архив, см. ниже)
 cd fire-monitoring
 ```
 
 Windows (PowerShell):
 
 ```powershell
-git clone {{REPO_URL}} fire-monitoring
+# клонируйте репозиторий в каталог fire-monitoring (или распакуйте архив, см. ниже)
 cd fire-monitoring
 ```
 
-Если вместо адреса выдан архив — распакуйте его и перейдите в каталог, где лежит `inference.py`
+Если код выдан архивом — распакуйте его и перейдите в каталог, где лежит `inference.py`
 (Linux: `unzip SAMARKAND_repo_v1.0-final.zip -d fire-monitoring`; Windows:
 `Expand-Archive SAMARKAND_repo_v1.0-final.zip -DestinationPath fire-monitoring`). Веса внутри архива есть.
 
