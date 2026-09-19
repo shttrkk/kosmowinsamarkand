@@ -423,8 +423,10 @@ data/, baseline/, out/, submissions/*.csv     не в git
 - **Предобученные модели:** AF — нет (LightGBM обучен с нуля). BS — энкодер resnet34 с весами ImageNet из torchvision
   (BSD-3-Clause), подключён через segmentation-models-pytorch 0.5.0 (MIT); веса опубликованы задолго до старта.
 - **ПО** — только открытое: LightGBM (MIT), PyTorch (BSD-3), segmentation-models-pytorch (MIT), NumPy/SciPy/pandas (BSD),
-  rasterio (BSD-3), GeoPandas/Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet (BSD-2), Leaflet.draw (MIT),
-  Swagger UI (Apache-2.0); тексты лицензий Leaflet и Swagger UI — в `service/static/vendor/{leaflet,swagger}/LICENSE`.
+  rasterio (BSD-3), GeoPandas/Shapely (BSD-3), FastAPI (MIT), Uvicorn (BSD-3), Leaflet (BSD-2), Leaflet.draw (MIT), polygon-clipping (MIT),
+  Swagger UI (Apache-2.0); тексты лицензий — в `service/static/vendor/{leaflet,swagger,polygon-clipping}/LICENSE`. Подложки карты сервиса
+  (Esri World Imagery с атрибуцией, OpenStreetMap, ODbL) — внешние тайлы, загружаются браузером, в репозиторий не входят; без сети
+  интерфейс сам переходит в режим без подложки.
 
 ## 14. Команда
 

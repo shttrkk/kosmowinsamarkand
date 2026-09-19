@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Мониторинг природных пожаров</title>
-  <!-- Leaflet и Leaflet.draw лежат локально: интерфейс работает и без интернета (кроме подложки OSM) -->
+  <!-- Leaflet, Leaflet.draw и polygon-clipping лежат локально: интерфейс работает и без интернета (кроме подложек) -->
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/static/vendor/leaflet-draw/leaflet.draw.css">
   <link rel="stylesheet" href="/static/style.css">
@@ -17,7 +17,7 @@
   </header>
 
   <section>
-    <h2>1. Область</h2>
+    <h2>Область</h2>
     <p class="hint">Нарисуйте прямоугольник или полигон инструментами слева на карте — либо задайте bbox вручную.</p>
     <div class="row">
       <input id="bbox" type="text" placeholder="minx,miny,maxx,maxy" aria-label="bbox">
@@ -27,36 +27,47 @@
   </section>
 
   <section>
-    <h2>2. Период</h2>
+    <h2>Период</h2>
     <div class="row">
       <label>с <input id="date-from" type="date"></label>
       <label>по <input id="date-to" type="date"></label>
+    </div>
+    <div class="row presets">
+      <button id="preset-2024" class="ghost" type="button">Сезон 2024</button>
+      <button id="preset-all" class="ghost" type="button">Весь период</button>
     </div>
     <div id="dates-info" class="hint"></div>
   </section>
 
   <section>
-    <h2>3. Источник масок</h2>
-    <div class="row seg">
-      <label><input type="radio" name="source" value="gt" checked> эталон (gt)</label>
-      <label><input type="radio" name="source" value="pred"> модель (pred)</label>
-    </div>
+    <h2>Источник масок</h2>
+    <label class="toggle" title="Эталон — разметка организаторов; модель — предсказания наших AF- и BS-модулей">
+      <span id="src-gt" class="on">Эталон</span>
+      <input id="source-toggle" type="checkbox" role="switch" aria-label="Источник: эталон или модель">
+      <i class="track"><i class="knob"></i></i>
+      <span id="src-pred">Модель</span>
+    </label>
+    <div id="source-info" class="hint"></div>
   </section>
 
-  <div class="row">
-    <button id="btn-query" class="primary">Запросить</button>
+  <div class="row actions">
+    <button id="btn-query" class="primary"><span class="spinner" aria-hidden="true"></span><span class="label">Запросить</span></button>
     <button id="btn-demo">Демо-запрос</button>
+    <button id="btn-clear" class="ghost" title="Убрать результат, область и параметры из адресной строки">Очистить</button>
   </div>
-  <div id="status" class="status"></div>
+  <div id="status" class="status" role="status"></div>
+  <div id="empty" class="empty" hidden>
+    <b>В этой области за выбранный период ничего не найдено.</b>
+    <span>Расширьте период или область — либо посмотрите готовый пример.</span>
+    <button id="btn-demo-2" type="button">Показать демо-запрос</button>
+  </div>
 
   <section id="summary" hidden>
     <h2>Аналитическая справка</h2>
-    <table>
-      <thead><tr><th>Степень поражения</th><th>Площадь, га</th><th>Доля, %</th></tr></thead>
-      <tbody id="summary-rows"></tbody>
-      <tfoot><tr><th>Всего гарей</th><th id="sum-total"></th><th>100</th></tr></tfoot>
-    </table>
+    <div class="total"><span id="sum-total">0</span><small>га гарей</small></div>
+    <div id="tiles" class="tiles"></div>
     <div id="sharebar" class="sharebar"></div>
+    <p id="summary-line" class="facts-line"></p>
     <dl id="summary-facts"></dl>
     <p class="hint" id="crs-note"></p>
 
@@ -71,14 +82,30 @@
     </div>
   </section>
 
-  <footer>
-    <div class="legend">
-      <span><i class="sw" style="background:#f4d03f"></i>слабая</span>
-      <span><i class="sw" style="background:#f39c12"></i>средняя</span>
-      <span><i class="sw" style="background:#c0392b"></i>сильная</span>
-      <span><i class="dot" style="background:#e74c3c"></i>термоточка, день</span>
-      <span><i class="dot" style="background:#8e44ad"></i>ночь</span>
+  <section>
+    <h2>Слои</h2>
+    <div class="layers">
+      <label><input type="checkbox" id="ly-hot" checked> Термоточки <b id="cnt-hot" class="cnt"></b></label>
+      <label><input type="checkbox" id="ly-scars" checked> Гари <b id="cnt-scars" class="cnt"></b></label>
+      <label><input type="checkbox" id="ly-chips"> Охваты сцен <b id="cnt-chips" class="cnt"></b></label>
+      <label><input type="checkbox" id="ly-aoi" checked> Граница территории</label>
     </div>
+    <div class="row seg-row"><span class="seg-label">Показывать:</span>
+      <div class="segmented" id="scar-mode" role="group" aria-label="Режим показа гарей">
+        <button type="button" data-v="severity" class="on">степени</button>
+        <button type="button" data-v="outline">только контур</button>
+      </div>
+    </div>
+    <div class="row seg-row"><span class="seg-label">Подложка:</span>
+      <div class="segmented" id="basemap" role="group" aria-label="Подложка">
+        <button type="button" data-v="sat" class="on">Спутник</button>
+        <button type="button" data-v="osm">Карта</button>
+        <button type="button" data-v="none">Нет</button>
+      </div>
+    </div>
+  </section>
+
+  <footer>
     <a href="/docs" target="_blank">REST API (OpenAPI)</a>
   </footer>
 </aside>
@@ -86,6 +113,7 @@
 
 <script src="/static/vendor/leaflet/leaflet.js"></script>
 <script src="/static/vendor/leaflet-draw/leaflet.draw.js"></script>
+<script src="/static/vendor/polygon-clipping/polygon-clipping.umd.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
