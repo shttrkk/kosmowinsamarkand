@@ -279,11 +279,12 @@ def test_predictor_stack_cpu(tiny_checkpoint, tmp_path, monkeypatch):
 
 
 def test_bs_variant_switch():
-    """bs.variant: по умолчанию v4; ms — пресет кандидата v5 из configs/bs_inference.yaml; явные ключи сильнее пресета."""
+    """bs.variant: по умолчанию ms (финал v5, пресет из configs/bs_inference.yaml); base (= v4) — быстрый режим."""
     from firemon.models.bs.infer import load_bs_config
 
-    v4 = load_bs_config({})
-    assert v4["variant"] == "v4" and v4["stack_weights"] == "weights/bs_stack.txt" and float(v4["stack_gate"]) == 0.03
+    assert load_bs_config({})["variant"] == "ms" and load_bs_config({"variant": "v4"})["variant"] == "base"
+    v4 = load_bs_config({"variant": "base"})
+    assert v4["variant"] == "base" and v4["stack_weights"] == "weights/bs_stack.txt" and float(v4["stack_gate"]) == 0.03
     assert len(v4["unet_weights"]) == 2 and not v4.get("aux_unet_weights") and "variants" not in v4
     ms = load_bs_config({"variant": "ms", "model": "unet"})
     assert ms["variant"] == "ms" and ms["stack_weights"] == "weights/bs_stack_ms.txt" and float(ms["stack_gate"]) == 0.01
@@ -294,10 +295,11 @@ def test_bs_variant_switch():
     assert float(over["stack_gate"]) == 0.05
     with pytest.raises(ValueError):
         load_bs_config({"variant": "nope"})
-    # общий конфиг по умолчанию — v4, отдельный — ms
+    # общий конфиг по умолчанию — ms (v5), быстрый режим — отдельный конфиг base (v4)
     from firemon.utils import REPO_ROOT, load_config
 
-    assert "variant" not in load_config(REPO_ROOT / "configs" / "inference.yaml")["bs"]
+    assert load_config(REPO_ROOT / "configs" / "inference.yaml")["bs"]["variant"] == "ms"
+    assert load_config(REPO_ROOT / "configs" / "inference_bs_base.yaml")["bs"]["variant"] == "base"
     assert load_config(REPO_ROOT / "configs" / "inference_bs_ms.yaml")["bs"]["variant"] == "ms"
 
 

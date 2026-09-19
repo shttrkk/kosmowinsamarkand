@@ -1,0 +1,17 @@
+# Быстрый режим: BS — вариант base (v4, 2 UNet): GPU ≈ 21 с / CPU ≈ 52 с, −0.005 Score против финала v5 (ms):
+#   python inference.py --data-dir data/test --output out/submission_fast.csv --config configs/inference_bs_base.yaml
+# Конфиг inference.py. Бэкенды моделей зарегистрированы в src/firemon/pipeline.py (AF_BACKENDS / BS_BACKENDS).
+seed: 42
+workers: auto            # потоки чтения чипов и расчёта признаков: auto = min(число ядер, 16); перекрывается --workers; на результат не влияет
+
+af:
+  model: lgbm            # lgbm — LightGBM по пикселям-кандидатам (AF-17); rules — контекстное правило шага 0
+  fallback: rules        # чем заменить model, если он не поднялся (нет весов) — валидный submission важнее падения
+  weights_dir: weights   # af_lgbm_fold{0..4}.txt + af_lgbm_meta.json (порог подобран по OOF)
+  num_threads: auto      # потоки LightGBM predict (auto = min(число ядер, 16)); по строкам независимо → результат от числа не зависит
+
+bs:
+  variant: base          # v4: 2×UNet (1×) + стек с воротами 0.03; финал v5 — variant: ms (configs/inference.yaml)
+  model: unet            # unet — BSPredictor (2×UNet + стек-LGBM), параметры в configs/bs_inference.yaml; rules — пороги dNBR
+  fallback: rules        # если веса weights/bs_* не найдены
+  dnbr_thresholds: [0.10, 0.27, 0.44]   # USGS: слабая / средняя / сильная (только для model: rules)

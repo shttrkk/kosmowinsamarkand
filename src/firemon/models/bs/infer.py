@@ -22,10 +22,12 @@ def load_bs_config(inference_cfg: dict | None = None) -> dict:
     cfg = dict(load_config(path).get("bs", {})) if path.exists() else {}
     variants = cfg.pop("variants", None) or {}
     over = {k: v for k, v in (inference_cfg or {}).items() if k not in ("model", "dnbr_thresholds")}
-    variant = str(over.pop("variant", cfg.pop("variant", "v4")) or "v4")
-    if variant != "v4":  # пресет варианта (например ms — многомасштабный v5) поверх базовых настроек v4
+    variant = str(over.pop("variant", cfg.pop("variant", "base")) or "base")
+    if variant == "v4":  # прежнее имя базового варианта
+        variant = "base"
+    if variant != "base":  # пресет варианта (ms — многомасштабный v5, финал) поверх базовых настроек (base = v4)
         if variant not in variants:
-            raise ValueError(f"bs.variant = {variant!r}: нет такого варианта, доступны {['v4'] + sorted(variants)}")
+            raise ValueError(f"bs.variant = {variant!r}: нет такого варианта, доступны {['base'] + sorted(variants)}")
         cfg.update(variants[variant])
     cfg.update(over)  # явные ключи секции bs общего конфига сильнее пресета
     cfg["variant"] = variant

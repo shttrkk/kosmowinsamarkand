@@ -38,7 +38,8 @@ SCORE_LADDER = [
     ("BS: UNet →\nстек-LGBM", 0.7909),
     ("BS: событие,\n2-й UNet", 0.8248),
     ("BS: пост-\nобработка", 0.8344),
-    ("финал:\nбез TTA", 0.8300),
+    ("v4:\nбез TTA", 0.8300),
+    ("финал v5:\nмасштабы", 0.8353),
 ]
 # вклад решений в Score на OOF (ΔScore), final_numbers.md B2
 CONTRIB = [
@@ -50,6 +51,7 @@ CONTRIB = [
     ("AF: LightGBM на кандидатах", 0.025),
     ("BS: постобработка (MMU 25 px, дыры, 300 px от события)", 0.010),
     ("BS: второй UNet (усреднение)", 0.007),
+    ("BS: многомасштабный ансамбль v5 (UNet на 0.75× и 0.5×, ворота 0.01)", 0.005),
     ("BS: отказ от TTA (результат не зависит от устройства)", -0.004),
 ]
 
@@ -86,7 +88,7 @@ def af_contrib() -> Path:
 
 
 def score_ladder() -> Path:
-    fig, ax = plt.subplots(figsize=(12.0, 4.4), dpi=170, facecolor=SURFACE)
+    fig, ax = plt.subplots(figsize=(13.0, 4.4), dpi=170, facecolor=SURFACE)
     _style(ax)
     names = [s[0] for s in SCORE_LADDER]
     vals = [s[1] for s in SCORE_LADDER]
@@ -101,7 +103,7 @@ def score_ladder() -> Path:
     ax.set_axisbelow(True)
     ax.set_ylabel("Score (OOF, групповая валидация)", color=MUTED, fontsize=10)
     ax.tick_params(axis="x", labelsize=9, colors=INK)
-    ax.set_title("Score по шагам: 0.309 → 0.830 (последний шаг — отказ от TTA ради независимости от устройства)", loc="left",
+    ax.set_title("Score по шагам: 0.309 → 0.835 (отказ от TTA ради независимости от устройства, затем многомасштабный ансамбль v5)", loc="left",
                  fontsize=12, color=INK, fontweight="bold", pad=12)
     fig.tight_layout()
     out = FIG / "report_score_ladder.png"
@@ -125,7 +127,7 @@ def contrib() -> Path:
     ax.set_axisbelow(True)
     ax.set_xlabel("прирост Score (OOF) от решения", color=MUTED, fontsize=10)
     ax.tick_params(axis="y", labelsize=10.5, colors=INK)
-    fig.suptitle("Вклад каждого решения в Score (OOF): всего +0.521 к baseline 0.309", x=0.012, ha="left", fontsize=12, color=INK,
+    fig.suptitle("Вклад каждого решения в Score (OOF): всего +0.527 к baseline 0.309", x=0.012, ha="left", fontsize=12, color=INK,
                  fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = FIG / "report_contrib.png"

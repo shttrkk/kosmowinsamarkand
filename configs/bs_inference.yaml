@@ -2,6 +2,7 @@
 # Пороги декодирования, постобработка и веса ансамбля подобраны по OOF и лежат в weights/bs_decode.json
 # (пишет `python -m firemon.models.bs.ensemble`); ключи decode/postprocess/ens_weights здесь их перекрывают.
 bs:
+  variant: ms               # вариант по умолчанию — финал v5 (пресет в разделе variants); base — v4: всё, что ниже, без пресета
   device: auto              # auto | cpu | cuda
   use_unet: true
   use_stack: true           # LGBM 2-го уровня на «воротах» UNet (основной режим)
@@ -11,7 +12,7 @@ bs:
                             # stack_weights: weights/bs_stack_tta.txt + decode_file: weights/bs_decode_tta.json
   gpu_half: false           # fp32 (без TF32) на GPU: submission побайтно совпадает с CPU; true — fp16, ~6 px/чип отличий
   batch_size: 8
-  num_threads: 8
+  num_threads: auto         # auto = min(число ядер, 16); inference.py подставляет --workers
   unet_weights:
     - weights/bs_unet_r34_cedice.pt   # каналы v1
     - weights/bs_unet_r34_v4.pt       # каналы v4 (+ dNBR_med3, rule_sev, dist_center); вероятности усредняются
@@ -21,10 +22,10 @@ bs:
   lc_medians: weights/bs_lc_medians.json
   decode_file: weights/bs_decode.json
 
-  # ---- варианты (bs.variant в configs/inference.yaml или отдельный конфиг; по умолчанию v4 — всё, что выше) ----
+  # ---- варианты (bs.variant в configs/inference.yaml или отдельный конфиг; base = v4 — всё, что выше, без пресета) ----
   variants:
-    ms:   # КАНДИДАТ v5, многомасштабный: reports/bs_module.md §4.11. Включение: bs.variant: ms
-          # или `--config configs/inference_bs_ms.yaml`. OOF 0.4965 / 0.5116 против 0.4912 / 0.5008 у v4.
+    ms:   # ФИНАЛ v5, многомасштабный: reports/bs_module.md §4.11; public 0.8314 против 0.8262 у v4.
+          # OOF BS-части 0.4965 / 0.5116 против 0.4912 / 0.5008 у v4 (base).
       unet_weights:                         # база стека: среднее вероятностей
         - weights/bs_unet_r34_cedice.pt     #   v1, 1×
         - weights/bs_unet_r34_v4.pt         #   v4, 1×
